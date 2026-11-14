@@ -1,7 +1,7 @@
 import unittest
 from backend.awake import AwakeRequest,CONTINUOUS,SYSTEM_REQUIRED
 from backend.core import Invalid
-from backend.policy_draft import make_compounding_draft,preview_pool_margin
+from backend.policy_draft import make_compounding_draft,preview_pool_margin,set_margin_stop_target
 
 
 class RuntimePolicyTests(unittest.TestCase):
@@ -23,6 +23,19 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(draft['crypto_leverage_cap'],10)
         self.assertEqual(draft['equity_leverage_cap'],5)
         with self.assertRaises(Invalid):make_compounding_draft('-1')
+
+    def test_margin_stop_target_records_user_percentage_without_enabling_orders(self):
+        original=make_compounding_draft('60')
+        updated=set_margin_stop_target(original,'0.40')
+        self.assertEqual(updated['margin_stop_loss_fraction'],'0.40')
+        self.assertEqual(updated['stop_mode'],'margin_loss_target')
+        self.assertFalse(updated['execution_enabled'])
+        self.assertIsNone(updated['max_loss_usdt'])
+        self.assertIsNone(updated['price_stop_pct'])
+        self.assertIn('verified_margin_stop_execution',updated['blockers'])
+        self.assertNotIn('margin_stop_loss_fraction',original)
+        for value in ('0','1','-0.1','NaN'):
+            with self.assertRaises(Invalid):set_margin_stop_target(original,value)
 
     def test_sleep_guard_only_holds_on_ac_during_observation_and_releases(self):
         class Power:

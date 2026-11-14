@@ -25,3 +25,21 @@ def preview_pool_margin(initial_capital,verified_net_realized,occupied_margin,fe
         raise Invalid('Invalid pool preview amounts')
     pool=max(dec('0'),initial+dec(verified_net_realized)-occupied)
     return max(dec('0'),min(pool,available)-reserve)
+
+
+def set_margin_stop_target(draft,fraction):
+    if draft.get('status')!='draft' or draft.get('execution_enabled') is not False:
+        raise Invalid('Only an inactive strategy draft can be updated')
+    target=dec(fraction)
+    if not 0<target<1:
+        raise Invalid('Margin stop target must be between zero and one')
+    result=dict(draft)
+    result.update(stop_mode='margin_loss_target',margin_stop_loss_fraction=str(target),
+                  stop_cost_basis='before_fees_funding_and_slippage',
+                  margin_stop_updated_at=now(),updated_at=now())
+    result['price_stop_pct']=None  # Legacy unified-price setting is not used by this draft.
+    blockers=[b for b in result.get('blockers',[]) if b!='price_stop_pct']
+    if 'verified_margin_stop_execution' not in blockers:
+        blockers.append('verified_margin_stop_execution')
+    result['blockers']=blockers
+    return result

@@ -15,9 +15,15 @@ For illustration only, a pool of 60, margin of 60, leverage of 10 and price stop
 of about 12, or 20% of the pool. A 2% pool-risk budget would imply margin of about 6 before costs.
 At 10x, a 30% margin-loss scenario corresponds to about a 3% adverse price move.
 
-2% per-trade risk and 10% drawdown are editable **preview examples**, not verified optimal parameters
-or enabled account settings. The stop field starts empty. Pool drawdown is only scenario arithmetic;
-no high-watermark enforcement is implemented by this calculator.
+Risk-budget percentages are editable preview values, not verified optimal parameters or enabled account
+settings. An unconfigured stop starts empty; a recorded margin-loss target pre-fills the unit explicitly
+as margin loss and converts it by leverage. A newer recorded policy revision supersedes older browser
+preview defaults. Cumulative drawdown may be left blank and is never inferred from a single-trade stop.
+Pool drawdown is only scenario arithmetic; no high-watermark enforcement is implemented by this calculator.
+
+A 40% margin-loss target on a margin allocation of 60 estimates a loss of 24 before costs. The approximate
+price distances are 4% at 10x or 8% at 5x. If the allocation compounds to 120, the same target estimates
+48 before costs. These are target calculations, not a guarantee that realized losses are capped.
 
 保存仅保存在本浏览器的试算草案，不修改后台策略草案或实盘参数，不开启交易。
 手续费、资金费、滑点、维持保证金、强平机制、交易所最小下单量均可能改变实际结果。

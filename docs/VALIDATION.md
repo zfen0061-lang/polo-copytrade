@@ -123,3 +123,11 @@ stop conversions, pool-risk sizing and account-refresh scheduling. A real browse
 verified a full-pool 10x/2%-price scenario and a 30%-margin scenario, saved only to the test browser's
 localStorage and observed no trading requests or JavaScript errors. The stop input starts empty.
 The preview does not update server-side risk parameters or implement live compounding/drawdown control.
+## Recorded margin-loss target
+
+A selected margin-loss percentage is now persisted in the inactive strategy draft with an explicit
+margin-loss basis, rather than treated as a unified price-stop percentage. Four runtime-policy tests
+and six Node tests pass. A real browser verified the recorded 40% target, the 4%/8% price-distance
+conversions at 10x/5x, the 24-on-60 loss estimate and a blank cumulative loss/drawdown field.
+The update does not infer a cumulative loss cap or enable order execution. User-specific runtime
+draft data stays outside the Git repository.

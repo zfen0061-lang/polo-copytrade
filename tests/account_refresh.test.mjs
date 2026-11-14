@@ -21,6 +21,14 @@ test('position sizing reconciles a price stop with a pool risk budget',()=>{
   assert.throws(()=>previewStopRisk({capital:60,margin:61,leverage:10,stopPercent:2}));
 });
 
+test('a 40 percent margin stop compounds in dollars without inventing a cumulative limit',()=>{
+  const start=previewStopRisk({capital:60,margin:60,leverage:10,stopPercent:40,stopUnit:'margin',riskPercent:40,drawdownPercent:''});
+  assert.equal(start.expectedLoss,24);assert.equal(start.priceStopPercent,4);
+  assert.equal(start.drawdownLimit,null);
+  const grown=previewStopRisk({capital:120,margin:120,leverage:5,stopPercent:40,stopUnit:'margin',riskPercent:40,drawdownPercent:''});
+  assert.equal(grown.expectedLoss,48);assert.equal(grown.priceStopPercent,8);
+});
+
 test('idle accounts refresh automatically on the interval',async()=>{
   let clock=0,calls=0,updated;
   const refresh=createAccountRefresher({clock:()=>clock,load:async()=>({updated:++calls}),

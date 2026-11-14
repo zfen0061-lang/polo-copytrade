@@ -98,3 +98,13 @@ The running Windows host accepted the AC system-awake request. The guard heartbe
 on AC, display-off allowed and restart prevention false. No power-plan, update-policy, startup task,
 credential persistence or account permissions were modified. A draft was saved locally without a
 transfer or order. The connected read-only account and independent public observer remain running.
+## Public-tab hydration recovery
+
+After 103 successful observation polls, selecting the public operation tab timed out repeatedly.
+A clean-page check confirmed the public records were still available after client rendering settled.
+The collector now waits for the load event and a bounded two-second client-render settling period
+before tab selection. The failed observation process alone was replaced; the connected account server
+and AC awake guard stayed running. Two successful recovery polls recorded eleven cumulative baseline
+operations, zero new-operation executions and no orders. The operation first visible after the outage
+was treated as reconnection history, not replayed as a trade. Restart baseline-count preservation is tested.
+This recovery does not establish an uptime guarantee for the public website.

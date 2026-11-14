@@ -52,6 +52,22 @@ class ObserverTests(unittest.TestCase):
     def test_second_observer_cannot_claim_the_same_trader(self):
         with self.assertRaises(Invalid):SignalObserver(self.store).claim()
 
+    def test_restart_preserves_counts_and_rebaselines_missed_operations(self):
+        self.observer.poll()
+        self.observer.close()
+        self.collector.rows=[operation('during-disconnection'),*self.collector.rows]
+        restarted=SignalObserver(self.store,collector_factory=lambda:self.collector)
+        try:
+            restarted.claim();restarted.poll()
+            state=self.store.snapshot()
+            meta=json.loads(state['traders'][0]['signal_monitor'])
+            self.assertEqual(meta['baseline_count'],2)
+            self.assertEqual(meta['new_count'],0)
+            self.assertEqual(len(state['events']),2)
+            self.assertEqual(state['events'][0]['status'],'baseline')
+            self.assertEqual(state['orders'],[])
+        finally:restarted.close()
+
     def test_history_gap_stops_before_inserting_new_operations(self):
         self.observer.poll()
         self.collector.rows=[operation('new')]

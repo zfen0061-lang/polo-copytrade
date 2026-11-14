@@ -80,7 +80,7 @@ class SignalObserver:
                 raise Invalid('Close this trader\'s paper positions before enabling observation')
             self.meta=dict(mode='observe',status='starting',owner=self.owner,pid=os.getpid(),
                            heartbeat=time.time(),started_at=now(),last_poll=None,last_error='',
-                           baseline_count=0,new_count=0,polls=0,timezone='UTC',
+                           baseline_count=old.get('baseline_count',0),new_count=old.get('new_count',0),polls=0,timezone='UTC',
                            portfolio_id='5075281354358777856',interval_seconds=15)
             db.execute('UPDATE traders SET signal_monitor=?,enabled=1 WHERE id=?',
                        (json.dumps(self.meta),self.trader_id))

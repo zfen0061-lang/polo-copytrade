@@ -74,6 +74,10 @@ class PublicCollector:
             raise Invalid('Public page access restricted or rate limited; observation paused')
         if self.expected_name:
             self.page.get_by_role('heading',name=self.expected_name,exact=True).wait_for(timeout=15000)
+        self.page.wait_for_load_state('load',timeout=20000)
+        # Binance renders clickable SSR tabs before client handlers are attached.
+        # Give client hydration a bounded settling period before selecting a tab.
+        self.page.wait_for_timeout(2000)
         tab=self.page.get_by_role('tab', name='最新操作记录', exact=True)
         tab.click(timeout=15000)
         panel = self.page.get_by_role('tabpanel', name='最新操作记录', exact=True)

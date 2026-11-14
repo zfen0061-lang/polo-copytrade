@@ -19,6 +19,7 @@ def main():
     subprocess.run([
         sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir',
         '--name', 'PoloCopyTrade', '--distpath', str(ROOT / 'dist'),
+        '--icon', str(ROOT / 'frontend' / 'polo.ico'),
         '--workpath', str(ROOT / 'build'), '--specpath', str(ROOT / 'build'),
         '--paths', str(ROOT), '--collect-all', 'playwright',
         '--collect-all', 'greenlet',

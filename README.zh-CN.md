@@ -78,3 +78,7 @@ node --check frontend/live-ui.js
 [验证记录](docs/VALIDATION.md) · [接口](docs/API.md) · [后续上线工作](docs/PRODUCTION.md)
 
 开发本版没有连接你的账户，也没有向币安提交真实订单。
+
+## 桌面 P 图标
+
+已有本地项目的用户可以双击 create-desktop-shortcut.cmd。它会安装已发布的运行版到个人程序目录并创建桌面 P 图标。首次需下载运行包，以后不再依赖源码目录或 Python。详见 [桌面图标说明](docs/DESKTOP.md)。

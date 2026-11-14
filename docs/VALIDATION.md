@@ -41,3 +41,7 @@ Run: https://github.com/zfen0061-lang/polo-copytrade/actions/runs/43638508070
 ## Public preview / 公开预览版
 
 v0.3.0-preview is published with draft=false and prerelease=true, with the Windows runtime ZIP and SHA256 file. Preview build run 43639131046 and draft-release job succeeded. Source start.cmd now uses polo.py so a successful launch opens the local webpage automatically. Online Binance source/account/execution validation remains pending.
+
+## Desktop installer checks
+
+58 source tests pass. Added release-download checksum and archive extraction checks, including traversal and symlink rejection. The Windows icon was converted to ICO and read back at 256x256. A test shortcut was created only inside the writable workspace, and launcher PowerShell syntax was checked. The actual Desktop/user program directory installation must be run by the user; no desktop shortcut was created there by the agent.

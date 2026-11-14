@@ -1,29 +1,33 @@
-# Production integration / 实盘接入边界
+# Production status / 上线状态
 
-The application currently executes paper orders only. A live-mode API request is rejected, and there is no live API credential input. This boundary is deliberate and visible in the UI; it is not a claim that the previous real-order prototype is production-ready.
+v0.2 includes production/testnet account execution code. It has not completed online certification. No user's account or real funds were used in development.
 
-当前前后端 App 只执行模拟交易，不能通过更改前端显示状态启用实盘。此前命令行中的真实下单接口原型没有接到这里。
+## Implemented / 已实现
 
-## Required before a live executor can be delivered
+Separate account/paper UI; local hidden key entry; read-only connection; explicit parameters; one active trader; IOC limit openings and reduce-only closes; persisted intent and query-first recovery; exchange STOP_MARKET confirmation; protection-failure exit attempt; periodic position reconciliation and equity loss budget. No automatic following after restart.
 
-1. **Authorized signal adapter / 获准的数据接口**: establish source access rights, verify identity/portfolio ID and timezone, capture first-seen timestamps, quantify publication delay, detect gaps and preserve source ordering. Public UI access is not proof of automated-access permission or a fixed latency SLA.
-2. **Live execution adapter / 真实执行器**: correct account type, symbol filters, quantity/price rounding, account mode, leverage/margin checks, real available balance, rate-limit handling, clock synchronization, order identifiers and explicit trade sizing rules.
-3. **Exchange-side protection / 交易所保护单**: after every actual fill, submit and verify protective stops, handle partial fills and changing stop quantities, track trigger basis, clean up orphaned orders, and define what happens if protection fails. A browser timer is not an exchange stop.
-4. **Reconciliation / 对账恢复**: use account execution streams plus REST recovery. Persist intent before submission, query uncertain orders before any resend, and distinguish exchange stops from manual intervention. Never claim exactly-once execution merely because a local database has unique rows.
-5. **Multi-trader ownership / 多交易员仓位归属**: distinguish per-trader virtual allocations from the exchange's net/hedged positions. If two traders use the same symbol, one trader must not close another's allocation or a manual position. The paper ledgers in this version are isolated, but no exchange-side isolation is implemented.
-6. **Risk policy / 风险规则**: user-specified allocation, leverage, total exposure, loss budgets, signal freshness, permitted slippage and source-switch behavior. Late close signals require reconciliation rather than blindly replaying historical trades. Unknown source closing percentages cannot be reconstructed from hidden positions.
-7. **Online verification / 在线验证**: official demo environment, partial fills, disconnects, rejected stops, rate limits, duplicate events, process crashes, restarts and source-format changes. Then an explicitly user-configured production connection. No capital or leverage should be inferred from demo settings.
-8. **Deployment / 部署**: durable service, supervision, secrets management, telemetry, time synchronization, backups and an authenticated frontend. GitHub stores source code; a private repository does not host a permanent trading engine.
+The execution lock covers one local data directory, not all machines or accounts. Use one process per dedicated account.
 
-Official references (consult current account-specific rules):
+## Before unattended use / 无人值守前
 
-- https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
-- https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Order
-- https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order
-- https://www.binance.com/en/support/faq/detail/30f1e3a2835345e0b8ffc87f261a8256
+1. Verify source access, trader identity, timezone, parsing and measured publication delay. No fixed-delay guarantee or hidden data access exists.
+2. Exercise actual testnet keys, account modes, filters, partial fills, stops, uncertain responses, rate limits, restarts and manual position changes.
+3. Add authenticated account event-stream recovery, broader algo-state coverage and latency measurement. No exactly-once claim is made.
+4. Concurrent real traders need verified virtual ownership and net-position reconciliation; first release rejects mixed/manual positions.
+5. Add durable hosting, authenticated access, process supervision, restricted permissions/IPs, time synchronization, alerts and backups.
+6. Only after online checks, use personally chosen production limits and inspect exchange confirmations. Demo amounts are not allocation advice.
 
-## Repository descriptions
+本版未部署云服务或手机推送。UI日志在本机；机器停止就不会观察新操作。已确认交易所保护单仍可能触发，但不保证成交价格。
 
-**中文**：支持多交易员切换、独立参数、3%跟随价差控制、模拟执行和信号延迟记录的本地前后端研究应用。用于评估官方跟单不可用时公开操作数据的跟随可行性；不突破名额限制、不读取隐藏仓位，当前不支持实盘。
+## Repository descriptions / 仓库简介
 
-**English**: A local full-stack research app for multi-trader selection, configurable follow rules, a default 3% adverse entry-deviation limit, paper execution and auditable signal-latency logs. It evaluates public-signal strategies when official copying is unavailable; it does not bypass follower capacity, reveal hidden positions or support live trading in this release.
+中文：Polo CopyTrade 是支持交易员切换、自定义参数和默认3%不利开仓价差的本地前后端跟单应用，分离模拟实验室与币安账户工作台，含测试网和正式账户执行适配器。不突破官方跟单容量、不读取隐藏仓位；真实接口尚待在线端到端验证。
+
+English: A local full-stack copy-trading app with trader selection, configurable rules and default 3% adverse entry deviation. The paper lab is separate from Binance testnet/production execution. It does not bypass official capacity or reveal hidden positions; online end-to-end validation remains necessary.
+
+## Primary documentation
+
+- [Futures general information](https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info)
+- [New order](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Order)
+- [New algo order](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order)
+- [Query algo order](https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Algo-Order)

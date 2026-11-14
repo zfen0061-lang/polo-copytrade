@@ -45,7 +45,7 @@ class HTTPTests(unittest.TestCase):
         return status,json.loads(content) if b'application/json' in head else content
 
     def test_frontend_assets_and_state(self):
-        self.assertIn(b'CopyTrade Studio',self.request('/')[1])
+        self.assertIn(b'Polo CopyTrade',self.request('/')[1])
         self.assertEqual(self.request('/app.js')[0],200)
         state=self.request('/api/state')[1]
         self.assertFalse(state['live_available'])
@@ -64,6 +64,15 @@ class HTTPTests(unittest.TestCase):
         status,_=self.request('/api/mode',{'mode':'live'},self.token)
         self.assertEqual(status,409)
         self.assertEqual(self.store.snapshot()['orders'],[])
+
+    def test_account_workspace_starts_disconnected_and_rejects_browser_credentials(self):
+        status=self.request('/api/live/state')[1]
+        self.assertFalse(status['connected'])
+        self.assertFalse(status['watching'])
+        self.assertIsNone(status['account'])
+        self.assertEqual(self.request('/api/live/connect',{'api_secret':'do-not-submit-browser-secrets'},self.token)[0],400)
+        self.assertEqual(self.request('/live-ui.js')[0],200)
+        self.assertEqual(self.request('/polo-logo.png')[0],200)
 
     def test_create_toggle_demo_and_export(self):
         payload=dict(name='Integration test',url='https://www.binance.com/copy-trading/lead-details/5075281354358777857',source='demo')

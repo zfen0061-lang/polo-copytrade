@@ -372,7 +372,7 @@ class Store:
                 latest = next((e for e in events if e['trader_id'] == t['id']), None)
                 t['last_seen'] = latest['first_seen'] if latest else None
             points = [dict(r) for r in db.execute('SELECT value,created FROM equity ORDER BY id DESC LIMIT 60')][::-1]
-            return dict(mode='paper', live_available=False, live_reason='实盘交易未接入本App。现有页面只执行模拟订单。',
+            return dict(mode='paper', live_available=False, live_reason='此接口只返回模拟实验室数据；账户工作台使用独立的 /api/live 接口。',
                         paused=json.loads(db.execute("SELECT value FROM settings WHERE key='paused'").fetchone()[0]),
                         metrics=dict(balance=str(balance), equity=str(balance + pnl + unrealized), realized_net=str(pnl),
                                      unrealized=str(unrealized), fees=str(fees), positions=len(positions),

@@ -13,15 +13,17 @@ from urllib.parse import urlsplit
 
 from .core import Invalid,Store
 from .feeds import Runner
+from .live import LiveManager
 
 ROOT=Path(__file__).resolve().parents[1]
 
 
-def make_handler(store,runner,port):
+def make_handler(store,runner,port,live=None):
+    live=live or LiveManager(store)
     token=secrets.token_urlsafe(32)
     allowed_hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
     class Handler(BaseHTTPRequestHandler):
-        server_version='CopyTradeStudio/0.1'
+        server_version='PoloCopyTrade/0.2'
 
         def log_message(self,format,*args):
             # Request paths only; never log bodies, configuration or credentials.
@@ -52,6 +54,8 @@ def make_handler(store,runner,port):
                 self.send(200,{'csrf_token':token})
             elif route=='/api/state':
                 self.send(200,store.snapshot())
+            elif route=='/api/live/state':
+                self.send(200,live.status())
             elif route=='/api/config/export':
                 self.send(200,store.export_config())
             elif route=='/api/events.csv':
@@ -65,14 +69,14 @@ def make_handler(store,runner,port):
                     writer.writerow({k:("'"+str(v) if isinstance(v,str) and v.startswith(('=','+','-','@')) else v) for k,v in e.items()})
                 self.send(200,('\ufeff'+output.getvalue()).encode(),'text/csv; charset=utf-8')
             else:
-                files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/style.css':'style.css'}
+                files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/style.css':'style.css','/polo-logo.png':'polo-logo.png','/live-ui.js':'live-ui.js'}
                 name=files.get(route)
                 if not name:
                     self.send(404,{'error':'Not found'})
                     return
                 path=ROOT/'frontend'/name
-                kind={'html':'text/html','js':'text/javascript','css':'text/css'}[name.split('.')[-1]]
-                self.send(200,path.read_bytes(),kind+'; charset=utf-8')
+                kind={'html':'text/html; charset=utf-8','js':'text/javascript; charset=utf-8','css':'text/css; charset=utf-8','png':'image/png'}[name.split('.')[-1]]
+                self.send(200,path.read_bytes(),kind)
 
         def do_POST(self):
             if not self.host_ok(): return
@@ -95,11 +99,30 @@ def make_handler(store,runner,port):
                 parts=route.strip('/').split('/')
                 if route=='/api/traders':
                     result=store.save_trader(payload)
+                elif route=='/api/live/connect':
+                    if payload:raise Invalid('Credentials are accepted only by the local terminal launcher / 请只在本机终端输入密钥')
+                    result=live.connect()
+                elif route=='/api/live/refresh':
+                    result=live.refresh_account()
+                elif route=='/api/live/start':
+                    result=live.start(payload.get('trader_id'),payload.get('config'))
+                elif route=='/api/live/pause':
+                    if not isinstance(payload.get('paused'),bool):raise Invalid('paused must be boolean')
+                    result=live.pause(payload['paused'])
+                elif route=='/api/live/stop':
+                    result=live.stop()
                 elif len(parts)==4 and parts[:2]==['api','traders']:
                     trader_id,action=parts[2:]
-                    if action=='config': result=store.save_trader(payload,trader_id)
+                    if action=='config':
+                        live_state=live.status()
+                        if live_state['watching'] and live_state['trader_id']==trader_id:
+                            raise Invalid('该交易员正在账户跟随，不能修改来源或参数。请先停止并处理旧仓位。')
+                        result=store.save_trader(payload,trader_id)
                     elif action=='toggle':
                         if not isinstance(payload.get('enabled'),bool): raise Invalid('enabled must be boolean')
+                        live_state=live.status()
+                        if payload['enabled'] and live_state['watching'] and live_state['trader_id']==trader_id:
+                            raise Invalid('该来源正在用于账户跟随，不能同时启动模拟采集。')
                         store.toggle(trader_id,payload['enabled']); result={'ok':True}
                     elif action=='close':
                         store.close_paper(trader_id,payload.get('symbol'),payload.get('side'));result={'ok':True}
@@ -110,7 +133,7 @@ def make_handler(store,runner,port):
                     store.pause_all(payload['paused']);result={'ok':True}
                 elif route=='/api/mode':
                     if payload.get('mode')!='paper':
-                        self.send(409,{'error':'Live execution is not available in this App. No credentials or real orders are accepted. / 本App尚未接入实盘，不接收交易密钥，也不发送真实订单。'})
+                        self.send(409,{'error':'Use the separate account workspace to connect, configure and explicitly start a real/testnet session. / 请到独立账户工作台连接、填写参数并启动跟随；模拟开关不能转换真实订单。'})
                         return
                     result={'mode':'paper'}
                 else:
@@ -118,14 +141,18 @@ def make_handler(store,runner,port):
                 self.send(200,result)
             except (Invalid,ValueError,KeyError,TypeError) as error:
                 self.send(400,{'error':str(error)})
-            except Exception:
-                self.send(500,{'error':'Internal error; inspect local server output'})
+            except Exception as error:
+                from .executor import Halt,APIError
+                if isinstance(error,(Halt,APIError)):
+                    self.send(400,{'error':str(error)})
+                else:
+                    self.send(500,{'error':'Internal error; inspect local server output'})
 
     return Handler
 
 
 def main():
-    parser=argparse.ArgumentParser(description='CopyTrade Studio — local paper copy-trading dashboard')
+    parser=argparse.ArgumentParser(description='Polo CopyTrade — separate account and paper workspaces')
     parser.add_argument('--port',type=int,default=8765)
     parser.add_argument('--data',type=Path,default=ROOT/'data'/'studio.sqlite3')
     parser.add_argument('--no-runner',action='store_true',help='API verification without scheduled signal processing')
@@ -133,19 +160,21 @@ def main():
     if not 1024<=args.port<=65535: parser.error('Choose a port between 1024 and 65535')
     store=Store(args.data)
     runner=Runner(store)
+    live=LiveManager(store)
     try:
-        server=ThreadingHTTPServer(('127.0.0.1',args.port),make_handler(store,runner,args.port))
+        server=ThreadingHTTPServer(('127.0.0.1',args.port),make_handler(store,runner,args.port,live))
     except OSError:
         raise SystemExit('Port unavailable; choose --port 8766 or close the previous instance.')
     if not args.no_runner: runner.start()
-    print(f'CopyTrade Studio: http://127.0.0.1:{args.port}',flush=True)
-    print('PAPER ONLY. Demo data is synthetic; no live orders. Press Ctrl+C to stop.',flush=True)
+    print(f'Polo CopyTrade: http://127.0.0.1:{args.port}',flush=True)
+    print('Account execution is OFF at startup. The paper lab is separate. Press Ctrl+C to stop.',flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         pass
     finally:
         if not args.no_runner: runner.shutdown()
+        live.shutdown()
         server.server_close()
 
 

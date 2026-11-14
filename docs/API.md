@@ -1,22 +1,30 @@
-# Local API
+# Local API · v0.2
 
-Base URL: `http://127.0.0.1:8765`. Single-user loopback service; paper execution only.
+Base: `http://127.0.0.1:8765`. Account and paper execution are separate.
 
-GET `/api/session` returns a per-process CSRF token. Every POST requires JSON, the token in `X-CSRF-Token`, an allowed Host, and an allowed Origin when present. No wildcard CORS. The token is not a replacement for production authentication.
+GET `/api/session` returns a per-process CSRF token. All POSTs require JSON, `X-CSRF-Token`, an allowed Host and allowed Origin when present. This is not multi-user authentication.
 
 | Method | Route | Behavior |
 |---|---|---|
-| GET | `/api/state` | Current capabilities, traders, paper metrics, positions, latest 200 orders, latest 300 signals, latest 100 logs |
-| GET | `/api/config/export` | Schema-versioned trader configuration; no exchange credentials |
-| GET | `/api/events.csv` | Latest 300 signal records; text formula prefixes escaped |
-| POST | `/api/traders` | Create a paused trader with validated URL/source/config |
-| POST | `/api/traders/{id}/config` | Edit a paused trader with no open paper positions |
-| POST | `/api/traders/{id}/toggle` | `{ "enabled": true }`; public source requires verified timezone, access confirmation and optional collector dependency |
-| POST | `/api/traders/{id}/demo` | Generate one synthetic signal; `{ "scenario": "over_deviation" }` generates a 5% adverse entry |
-| POST | `/api/traders/{id}/close` | Close owned paper positions at last stored paper quotes; optional `symbol` and `side` |
-| POST | `/api/pause` | `{ "paused": true }` blocks new entries but not valid closes or local paper stops |
-| POST | `/api/mode` | Only paper is accepted; a live request returns 409 and sends no order |
+| GET | `/api/state` | Paper data, traders, signals and logs; mode remains paper |
+| GET | `/api/live/state` | Actual account snapshot when connected, environment, session and orders; no keys |
+| POST | `/api/live/connect` | Empty object; uses local environment credentials and reads account; no order |
+| POST | `/api/live/refresh` | Refresh actual account snapshot |
+| POST | `/api/live/start` | Explicit trader_id and complete config; asynchronously verifies and starts following |
+| POST | `/api/live/pause` | Boolean paused; blocks entries while continuing observation |
+| POST | `/api/live/stop` | Request stop without automatic liquidation |
+| GET | `/api/config/export` | Paper trader settings; no credentials |
+| GET | `/api/events.csv` | Latest 300 paper observations; spreadsheet formula prefixes escaped |
+| POST | `/api/traders` | Create paused trader |
+| POST | `/api/traders/{id}/config` | Edit paused, flat paper trader; blocked during its active account session |
+| POST | `/api/traders/{id}/toggle` | Boolean enabled; paper collection, cannot share active account source |
+| POST | `/api/traders/{id}/demo` | Synthetic paper operation, optional scenario over_deviation |
+| POST | `/api/traders/{id}/close` | Close paper positions only; optional symbol and side |
+| POST | `/api/pause` | Pause paper entries; retain paper close/stop checks |
+| POST | `/api/mode` | Paper compatibility only; cannot convert paper into account trading |
 
-Portfolio URLs must point to `https://www.binance.com/[zh-CN/]copy-trading/lead-details/{numeric_id}`. This is a strict destination allowlist, not arbitrary URL fetching. Unknown config fields, including attempted credential fields, are rejected.
+Account start config requires: budget, order_margin, leverage, max_deviation, stop_loss_pct, close_fraction, max_loss, max_signal_age, symbols, poll_seconds, utc_offset_minutes, fee_rate. Percentage fields are API fractions (3% = "0.03"); UI uses percent. Actual fees affect exchange equity, not the paper fee assumption.
 
-Amounts are stored as decimal strings. `max_deviation`, `stop_loss_pct`, `close_fraction` and `fee_rate` are fractions in the API; the UI displays percentages. `order_margin × leverage` gives the approximate notional used to size each paper opening. The source trader's quantity is not used to infer hidden leverage or total position size.
+A successful start response schedules verification, not proof of successful collection or an order. Inspect watching, error and actual order results. online_verified:false describes this release's verification limit, not current account connectivity.
+
+Allowed source URL: `https://www.binance.com/[zh-CN/]copy-trading/lead-details/{numeric_id}`. No login or challenge bypass. Browser connect payload credentials and unknown paper config fields are rejected. Source size never infers hidden holdings.

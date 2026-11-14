@@ -1,7 +1,7 @@
 [project]
 name = "copytrade-studio"
-version = "0.1.0"
-description = "Local multi-trader signal observation and paper copy-trading dashboard"
+version = "0.2.0"
+description = "Polo CopyTrade: separate Binance account and paper research workspaces"
 requires-python = ">=3.10"
 dependencies = []
 

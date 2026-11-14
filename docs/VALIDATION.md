@@ -1,19 +1,19 @@
 # Validation / 验证记录
 
-## Local checks
+v0.2: **43 local automated tests passed**: 21 core, 6 in-memory HTTP, 16 account-engine. Both JavaScript modules pass syntax checking.
 
-2026-11-15: **26 tests passed** (21 domain tests and 5 in-memory HTTP tests). JavaScript syntax checking passed. These results are local checks, not a live-exchange certification.
+Core covers long/short 3% boundaries, favorable prices, duplicate events/restarts, stale entries/late closes, independent paper ledgers, budgets, pauses, stops, timestamps and URL restrictions.
 
-2026-11-15：26项本地测试通过（21项交易规则/数据处理、5项内存HTTP接口），JavaScript语法检查通过。
+HTTP tests execute actual request parsing through in-memory byte streams: static logo/module routes, disconnected account state, browser credential rejection, Host/CSRF/Origin checks and paper/account separation.
 
-- Domain tests cover 3% entry boundaries for longs/shorts, favorable prices, duplicate events across restarts, first-read baselines, stale entries, late reductions, no reverse opening from a close, independent trader ledgers, entry pause semantics, local paper stops, fees, budgets, parameter locks, timestamps and source URL restrictions.
-- HTTP tests execute `BaseHTTPRequestHandler`'s real request parser and response writer through in-memory byte streams. They cover static assets, state, creation/toggling/demo, exports, Host checks, CSRF/same-origin mutation checks and live-mode rejection.
-- JavaScript receives a syntax check with `node --check frontend/app.js`.
+Account tests use a fake exchange: read-only connect, rejection of demo arming/incomplete params, confirmed stops, partial/full closes, failed protection with full/partial exit attempts, uncertain order recovery, triggered/missing stops, manual quantity/flat changes, flat-only config changes and no submission after stopping during source retrieval. That scenario also exposed a Windows SQLite status-read handle leak; connections now close explicitly.
 
-## Environment limitations
+**No actual Binance credentials, real orders or source-to-exchange end-to-end runs were used.** Local passing tests do not establish live integration or financial results.
 
-The execution environment returned Windows socket error 10013 when a test client tried to connect to a local HTTP server. These TCP tests did not complete. In-memory HTTP tests do not replace that missing check. Browser rendering, visual layout and interactive UI have not been verified through an automated browser in this environment. The VS Code CLI also returned a permissions error while trying to change into its installation directory; the editor window was not verified open.
+本版43项本地测试使用虚拟客户端，没有连接你的账户，没有向币安提交真实订单；实际密钥、公开采集、测试网和正式接口还需在线验证。
 
-本环境阻止了真实回环 HTTP 客户端连接（WinError 10013）。内存 HTTP 测试可以验证请求解析与路由，但不代表端口连接或浏览器交互已通过。VS Code 启动命令也受到权限限制，不能据此声称编辑器窗口已经打开。
+## Environment limits / 环境限制
 
-No Binance account is connected. No real orders were submitted. The optional public collector has not been exercised end-to-end in this release. Paper fills omit liquidity/depth, funding and exchange liquidation behavior.
+The execution environment rejected local HTTP TCP clients with Windows socket error 10013. In-memory tests do not replace real-port checks. No automated browser rendering or interactive verification was completed. The VS Code CLI returned a permission error; no editor window was verified open.
+
+用户已能访问旧版网页，不等于新版UI或交易接口已完成端到端验证。模拟成交省略深度、资金费和强平；真实延迟及故障恢复仍未实测。

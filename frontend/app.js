@@ -1,11 +1,13 @@
+import { createAccountUI } from './live-ui.js';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const escapeHtml = (x) => String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const zh = new Map($$('[data-i18n]').map(e => [e.dataset.i18n, e.innerHTML]));
 const en = {
+ accountWorkspace:'Account workspace',paperLab:'Paper lab',accountConnection:'Binance account connection',accountIntro:'Only balances and positions returned by the account API appear here. Connecting does not start trading.',connectAccount:'Verify local account connection',refreshAccount:'Refresh account',connectGuide:'How to enter credentials',yourCapital:'Connect your own account',accountEmpty:'Not connected. Launch account mode in your local terminal. Keys do not pass through chat or a browser form.',accountFollow:'Account auto-follow',oneLiveTrader:'This version follows one trader per account. Use one-way positions, isolated margin and single-asset USD-M Futures; do not mix manual trades.',choosePublicTrader:'Select an authorized public-source trader',configureReal:'Configure account parameters',pauseReal:'Pause new entries',stopReal:'Stop following',pauseRealNote:'Pausing entries keeps following closes. Stopping the process or session stops reading signals; already confirmed exchange stops remain.',realCodeStatus:'The execution adapter is integrated, but online Binance verification has not been completed in this environment. Validate on exchange testnet before real funds.',actualPositions:'Actual account positions',liquidation:'Estimated liquidation price',accountOrders:'Account execution records',exchangeConfirmed:'Recorded from actual order responses',connectStep1:'Press Ctrl+C in the old VS Code terminal to stop the previous server.',connectStep2:'Run python -m backend.connect or double-click connect-account.cmd.',connectStep3:'Choose production or testnet locally and enter the matching Key and Secret. Input is hidden and not saved to files.',connectStep4:'Open the dashboard, verify the local account connection and inspect environment, balance and positions before configuring execution.',credentialScope:'Use a dedicated IP-restricted key with read and Futures trading permissions, without withdrawal permission. Keys are not committed to GitHub. Re-enter them after the server exits or inject them with your own service manager.',realBudget:'Allocation limit · USDT',realMargin:'Margin per opening · USDT',realStop:'Exchange stop · price movement %',realLoss:'Dedicated-account loss budget · USDT',realStartNote:'Only newly observed operations are followed. Hidden existing positions are not copied. Configure matching leverage and isolated margin in Binance first. Existing unrelated positions or orders block startup.',startAccountFollow:'Start account following with these rules',
  workspace:'WORKSPACE',overview:'Overview',traders:'Traders',observability:'Signals & latency',settings:'Runtime & setup',
  localApp:'Running locally',localDesc:'Data stays on this computer.<br>Following stops with the server.',paperOnly:'PAPER ONLY',
- addTrader:'Add trader',notice:'Paper environment. Demo prices and operations are synthetic, not actual trades by the named trader. This App does not place live orders.',
+ addTrader:'Add trader',notice:'The paper lab uses synthetic demo or public signals for local accounting, separately from the account workspace and real funds.',
  equity:'Paper account equity',recordedStart:'Recorded start',now:'Now',simulatedFills:'Quote-based paper fills · configured fees included',noFunding:'No depth or funding simulation',
  currentTrader:'Selected trader',parameters:'Parameters',switchNote:'Changing the selected trader does not transfer funds, close positions or pause other traders.',
  positions:'Open paper positions',stopsNote:'Local paper stops require a running process and updated quotes.',closeSelected:'Close selected trader’s paper positions',
@@ -14,14 +16,14 @@ const en = {
  time:'Time',type:'Type',fillPrice:'Paper fill price',fee:'Fee',realized:'Realized P&L',medianLatency:'Observed delay · median',p95Latency:'Observed delay · P95',
  latencyNote:'Observed delay = first-seen time minus source-labelled time. Results below use the selected trader only. This is not an independent measurement of platform latency.',
  signalLog:'Operation signals',exportCsv:'Export CSV',source:'Source',sourceTime:'Source-labelled time',firstSeen:'First seen',operation:'Operation',sourcePrice:'Source fill price',quote:'Decision quote',deviation:'Adverse deviation',result:'Result / reason',activity:'Activity log',
- executionMode:'Execution readiness',localBackend:'Local frontend, backend & persistent ledger',available:'Available',paperStops:'Paper orders & local paper stops',publicFeed:'Public operations collector (optional)',requiresSetup:'Requires setup & access check',liveTrading:'Live execution & exchange stops',notConnected:'Not integrated',
- noKeys:'This App does not accept or store Binance trading credentials. Live execution needs a separate verified executor, protective orders and online integration tests.',liveBoundary:'Live integration boundary',
+ executionMode:'Execution readiness',localBackend:'Local frontend, backend & persistent ledger',available:'Available',paperStops:'Paper orders & local paper stops',publicFeed:'Public operations collector (optional)',requiresSetup:'Requires setup & access check',liveTrading:'Account execution & exchange stops',notConnected:'Online verification pending',
+ noKeys:'Keys are entered in the local terminal and kept in server-process memory. The separate account workspace connects production or exchange testnet. Complete online verification before production use.',liveBoundary:'Live integration boundary',
  dataProject:'Configuration & project',configExportNote:'Export trader settings without credentials, account funds or identity data. Review trader names and URLs before sharing.',exportConfig:'Export config JSON',runningBoundary:'Runtime boundaries',localOnly:'Bound to 127.0.0.1. Not a public multi-user service.',noCapacityBypass:'Does not bypass official copy capacity or reveal hidden positions.',publicDelay:'Public feed latency and completeness are not guaranteed.',paperRisk:'Paper results do not prove real fills or profitability.',footer:'Observe signals. Validate rules. Then consider execution.',
- demoDefaults:'Initial amounts and leverage are demonstration settings, not live-trading recommendations. Each trader is configured separately.',name:'Trader name',dataSource:'Signal source',portfolioUrl:'Binance lead portfolio URL',budget:'Paper budget · USDT',orderMargin:'Margin per opening · USDT',leverage:'Fixed leverage · ×',maxDeviation:'Max adverse entry deviation · %',stopPct:'Paper stop · price movement %',closeFraction:'Reduction on each close signal · %',maxLoss:'Paper loss budget · USDT',maxAge:'Entry signal expiry · seconds',poll:'Collection interval · seconds',feeRate:'Paper fee per side · %',symbols:'Allowed contracts · comma-separated',timezone:'Verified timezone of source timestamps',authorization:'Before public collection, I have verified my right to access and automatically retrieve this data. Not needed for demo mode.',closeRuleNote:'The reduction fraction is your own rule, not the source trader’s actual percentage. Pausing does not close existing paper positions.',cancel:'Cancel',save:'Save configuration',liveInfoText:'Orders in this App exist only in a local paper ledger. A switch cannot enable live trading. Production execution needs a verified execution adapter, exchange-side protective stops, account event streams and recovery, plus validation of access rights, latency and strategy rules.',liveInfoExtra:'GitHub stores the source code. GitHub Pages will not run this Python backend. Never commit credentials or expose the local service publicly.'
+ demoDefaults:'Initial amounts and leverage are demonstration settings, not live-trading recommendations. Each trader is configured separately.',name:'Trader name',dataSource:'Signal source',portfolioUrl:'Binance lead portfolio URL',budget:'Paper budget · USDT',orderMargin:'Margin per opening · USDT',leverage:'Fixed leverage · ×',maxDeviation:'Max adverse entry deviation · %',stopPct:'Paper stop · price movement %',closeFraction:'Reduction on each close signal · %',maxLoss:'Paper loss budget · USDT',maxAge:'Entry signal expiry · seconds',poll:'Collection interval · seconds',feeRate:'Paper fee per side · %',symbols:'Allowed contracts · comma-separated',timezone:'Verified timezone of source timestamps',authorization:'Before public collection, I have verified my right to access and automatically retrieve this data. Not needed for demo mode.',closeRuleNote:'The reduction fraction is your own rule, not the source trader’s actual percentage. Pausing does not close existing paper positions.',cancel:'Cancel',save:'Save configuration',liveInfoText:'The paper lab remains local simulation. The separate account workspace connects production or exchange testnet and, after explicit start, sends orders and verifies exchange stops. This release uses account polling and has not completed online integration tests in this environment. Validate source access, latency, recovery and all trade rules on testnet first.',liveInfoExtra:'GitHub stores the source code. GitHub Pages will not run this Python backend. Never commit credentials or expose the local service publicly.'
 };
 let language = localStorage.getItem('cts-language') || 'zh';
 let selected = localStorage.getItem('cts-trader') || 'aoying';
-let view = 'overview';
+let view = 'live';
 let state = null;
 let csrf = '';
 let editing = null;
@@ -38,6 +40,7 @@ const badge = (label, color='subtle') => `<span class="pill ${color}">${escapeHt
 const pnlClass = (x) => Number(x) >= 0 ? 'positive' : 'negative';
 const traderName = (id) => state?.traders.find(x => x.id === id)?.name || id;
 const currentTrader = () => state?.traders.find(x => x.id === selected);
+const accountUI = createAccountUI({api,toast,language:()=>language});
 
 function toast(message) {
   $('#toast').textContent = message;
@@ -76,6 +79,7 @@ function setView(next) {
   $$('.view').forEach(e => e.classList.toggle('hidden',e.id !== `view-${view}`));
   $$('.nav-item').forEach(e => e.classList.toggle('active',e.dataset.view === view));
   const titles = {
+    live:[t('Polo，连接你的交易账户。','Polo. Your account, your rules.'),t('账户资金、真实执行与模拟研究，分别管理。','Separate account funds, execution and paper research.')],
     overview:[t('让每次跟随，都有规则。','Give every follow a clear rule.'),t('统一管理交易员、跟随参数与模拟订单。','One workspace for traders, rules and paper orders.')],
     traders:[t('选择交易员，独立配置。','Different traders. Separate rules.'),t('添加带单主页，为每位交易员保存独立的预算和规则。','Add portfolio URLs and configure each trader independently.')],
     observability:[t('每一条信号，都可追溯。','A clear trail for every signal.'),t('所选交易员的来源时间、首次发现、价格偏离和执行原因。','Source time, first seen, price deviation and execution decisions.')],
@@ -83,7 +87,8 @@ function setView(next) {
   };
   $('#page-title').textContent = titles[view][0];
   $('#page-description').textContent = titles[view][1];
-  $('#breadcrumb').textContent = ({overview:'Overview',traders:'Traders',observability:'Signals & latency',settings:'Runtime & setup'})[view];
+  $('#breadcrumb').textContent = ({live:'Account workspace',overview:'Paper lab',traders:'Traders',observability:'Signals & latency',settings:'Runtime & setup'})[view];
+  accountUI.setView(view);
 }
 
 function empty(columns, text) { return `<tr><td class="empty" colspan="${columns}">${escapeHtml(text)}</td></tr>`; }
@@ -143,6 +148,7 @@ function render() {
   $('#logs').innerHTML=state.logs.length?state.logs.map(l=>`<div class="log-row"><time>${shortTime(l.created)}</time>${badge(l.level.toUpperCase(),l.level==='error'?'red':l.level==='warning'?'blue':'subtle')}<span>${escapeHtml(l.message)}</span></div>`).join(''):`<p class="muted small">${t('暂无日志','No activity yet')}</p>`;
   $('#updated').textContent=t('更新于 ','Updated ')+shortTime(new Date().toISOString());
   chart();
+  accountUI.updateApp(state);
 }
 
 async function refresh() {
@@ -151,6 +157,7 @@ async function refresh() {
   try {
     state=await api('/api/state');
     render();
+    await accountUI.refresh();
     $('.connection').classList.remove('offline');
     $('#connection-label').textContent=t('本地服务已连接','Local service connected');
   } catch(error) {

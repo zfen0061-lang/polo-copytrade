@@ -8,15 +8,15 @@ Target: download the release once, extract it, launch the EXE and configure your
 
 ## 仓库与首次推送 / Repository and first push
 
-本地已有 Git 提交。当前尚无远程地址或可访问仓库。先在 https://github.com/new 创建公开仓库（建议 polo-copytrade），不要上传密钥、运行数据库或打包后的整个虚拟环境。把实际仓库地址提供给维护者，再设置 origin 并推送。
+项目仓库：https://github.com/zfen0061-lang/polo-copytrade 。不要上传密钥、运行数据库或整个虚拟环境。贡献者可克隆仓库后修改代码、运行测试并提交更改。
 
-A public repository is needed before pushing. Do not publish local runtime data or credentials. This project includes an MIT license for its code; bundled third-party components retain their own licenses.
+Do not publish local runtime data or credentials. This project includes an MIT license for its code; bundled third-party components retain their own licenses.
 
 ## 自动打包 / Automated build
 
 .github/workflows/windows-release.yml 提供：
 
-1. GitHub Actions → Build Windows app → Run workflow，使用 Windows x64 / Python 3.13 构建。
+1. 推送影响运行程序或构建流程的代码到 main，或 GitHub Actions → Build Windows app → Run workflow，使用 Windows x64 / Python 3.13 构建。
 2. 安装构建依赖，运行源码测试。
 3. 将 Chromium 安装到 Playwright 包内部，与 Python 和前端一起打包。
 4. 启动构建出的 EXE，验证本地浏览器页面、HTTP接口及账户默认未连接。
@@ -42,3 +42,9 @@ Build on Windows using build-windows.cmd. The build includes only explicit app a
 - 若将来提供浏览器即用的云服务，需要单独设计账户隔离、身份验证、密钥管理和持续运行服务，本版未实现。
 
 Do not announce an EXE before the build and tests pass. Verify a clean target machine and online account/source behavior separately. A hosted multi-user trading service requires additional architecture and is not provided by GitHub source hosting.
+
+## 本机推送备用入口 / Local push fallback
+
+若连接返回403写入拒绝，维护者可在已有本地Git项目中双击 publish-github.cmd，按Git的浏览器提示登录账号。脚本只推送已提交的main，不自动暂存文件，不强制推送，不上传忽略的运行数据。源码ZIP不含.git，不能在新解压的源码目录直接使用此脚本。
+
+If integration writes are denied, run publish-github.cmd from this existing Git working tree and complete Git Credential Manager sign-in locally. It pushes committed main only, without staging files or force-pushing. A source ZIP does not contain Git history.

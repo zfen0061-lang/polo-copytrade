@@ -1,0 +1,4 @@
+{
+  "folders": [{"path": "."}],
+  "settings": {"files.exclude": {"**/__pycache__": true}, "python.testing.unittestEnabled": true, "python.testing.unittestArgs": ["-v", "-s", "tests"]}
+}

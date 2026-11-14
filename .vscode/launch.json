@@ -1,0 +1,4 @@
+{
+  "version": "0.2.0",
+  "configurations": [{"name": "CopyTrade Studio backend", "type": "debugpy", "request": "launch", "module": "backend.server", "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true}]
+}

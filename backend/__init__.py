@@ -1,0 +1,1 @@
+"""CopyTrade Studio local application."""

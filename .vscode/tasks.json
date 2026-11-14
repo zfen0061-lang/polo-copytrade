@@ -1,0 +1,7 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {"label": "Start CopyTrade Studio / 启动应用", "type": "shell", "command": "python", "args": ["-m", "backend.server"], "options": {"cwd": "${workspaceFolder}"}, "problemMatcher": []},
+    {"label": "Run tests / 运行测试", "type": "shell", "command": "python", "args": ["-m", "unittest", "discover", "-s", "tests", "-v"], "options": {"cwd": "${workspaceFolder}"}, "group": "test", "problemMatcher": []}
+  ]
+}

@@ -6,15 +6,15 @@ export function createAccountUI({api,toast,language}) {
   let account=null,app=null,view='live';
   function render(){
     if(!account)return;
-    const connected=account.connected,live=account.environment==='production';
-    $('#account-environment').textContent=connected?(live?text('真实账户 / Production','PRODUCTION ACCOUNT'):text('交易所测试网','EXCHANGE TESTNET')):text('未连接','NOT CONNECTED');
+    const connected=account.connected,live=account.environment==='production',readOnly=account.execution_allowed===false;
+    $('#account-environment').textContent=connected?(live?(readOnly?text('真实账户 · 只读','PRODUCTION · READ ONLY'):text('真实账户 / Production','PRODUCTION ACCOUNT')):text('交易所测试网','EXCHANGE TESTNET')):text('未连接','NOT CONNECTED');
     $('#account-environment').className='pill '+(connected?(live?'blue':'green'):'subtle');
     $('#account-empty').classList.toggle('hidden',connected);
     $('#real-metrics').classList.toggle('hidden',!connected);
     $('#account-error').textContent=account.error||'';
     $('#connect-account').disabled=account.watching;
     $('#refresh-account').disabled=!connected;
-    $('#configure-live').disabled=!connected||account.watching||!$('#live-trader-select').value;
+    $('#configure-live').disabled=readOnly||!connected||account.watching||!$('#live-trader-select').value;
     $('#pause-real').disabled=!account.watching;
     $('#stop-real').disabled=!account.watching;
     $('#live-trader-select').disabled=account.watching;
@@ -32,6 +32,10 @@ export function createAccountUI({api,toast,language}) {
       $('#mode-badge').textContent=connected?(live?(account.watching?text('实盘跟随已启用','LIVE FOLLOWING'):text('真实账户 · 跟随未启动','REAL ACCOUNT · IDLE')):text('交易所测试网','EXCHANGE TESTNET')):text('账户未连接','ACCOUNT DISCONNECTED');
       $('#mode-badge').className='pill '+(connected&&live?'blue':'subtle');
       $('#notice-text').textContent=live?text('账户工作台与模拟实验室独立。真实账户连接后显示实际资金；主动启动跟随后，操作会向币安发送真实订单。','The account workspace is separate from the paper lab. A production connection displays real funds; explicitly starting following will send real Binance orders.'):text('当前选择交易所测试网，与模拟实验室不同；订单提交到测试网，不操作真实资金。','Exchange testnet is selected. Orders are sent to the testnet, independently of the local paper lab.');
+      if(readOnly){
+        $('#mode-badge').textContent=text(live?'真实账户 · 只读模式':'测试网 · 只读模式',live?'PRODUCTION · READ ONLY':'TESTNET · READ ONLY');
+        $('#notice-text').textContent=text('当前仅验证账户余额和持仓，账户下单入口已关闭。','This session reads account balances and positions only. Account order execution is disabled.');
+      }
     }else{
       $('#mode-badge').textContent=text('模拟实验室','PAPER LAB');$('#mode-badge').className='pill green';
     }

@@ -217,8 +217,9 @@ class ProtectedEngine(Engine):
 
 
 class LiveManager:
-    def __init__(self,store,factory=TradeClient,collector_factory=None):
+    def __init__(self,store,factory=TradeClient,collector_factory=None,execution_allowed=True):
         self.store,self.factory=store,factory
+        self.execution_allowed=execution_allowed
         self.collector_factory=collector_factory
         self.client=None
         self.account_cache=None
@@ -245,6 +246,7 @@ class LiveManager:
                         connected=self.client is not None,environment=getattr(self.client,'environment',os.environ.get('POLO_BINANCE_ENV','production')),
                         account=self.account_cache,error=self.error,watching=self.watching,entries_enabled=self.entries_enabled,
                         trader_id=self.trader_id,orders=orders,active_config=self.active_config,online_verified=False,
+                        execution_allowed=self.execution_allowed,
                         note='账户快照来自实际API；自动执行代码尚未完成本环境的在线联调。')
 
     def connect(self):
@@ -268,6 +270,7 @@ class LiveManager:
         return self.status()
 
     def start(self,trader_id,raw,background=True):
+        if not self.execution_allowed:raise Invalid('当前为真实账户只读连接，只能读取余额和持仓，账户下单入口已关闭。')
         if not self.client:raise Invalid('账户尚未连接。')
         required={'budget','order_margin','leverage','max_deviation','stop_loss_pct','close_fraction','max_loss','max_signal_age','symbols','poll_seconds','utc_offset_minutes','fee_rate'}
         if not isinstance(raw,dict) or not required.issubset(raw):raise Invalid('请显式填写完整实盘参数，不能直接使用演示默认值。')

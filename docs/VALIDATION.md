@@ -51,3 +51,7 @@ v0.3.0-preview is published with draft=false and prerelease=true, with the Windo
 The browser was connecting to a legacy CopyTradeStudio/0.1 backend while reading newer frontend files. The legacy service returned 404 for live-ui.js, polo-logo.png and api/live/state. The verified legacy Python backend was stopped and replaced with PoloCopyTrade/0.3.0. All three resources then returned 200. A real headless browser loaded the logo, switched navigation, opened/closed the trader dialog and opened/closed account help, with no JavaScript errors or failed requests. No account connection button was clicked and no order request was sent. Current account state remains unconfigured, disconnected and not following.
 
 Added a visible startup notice until frontend handlers are installed and added navigation/dialog checks to the packaged browser smoke test. No logo file modification was needed.
+
+## Read-only production launcher
+
+60 local source tests pass, including production environment selection and a server-side execution lock for read-only account sessions. The read-only guard rejects account-follow starts before scheduling any worker. Fake credentials were used in tests; no real credentials were collected by the agent.

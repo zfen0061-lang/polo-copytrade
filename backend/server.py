@@ -159,12 +159,13 @@ def main(argv=None):
     parser.add_argument('--port',type=int,default=8765)
     parser.add_argument('--data',type=Path,default=default_data_dir()/'studio.sqlite3')
     parser.add_argument('--open-browser',action='store_true',help='Open the system browser after binding successfully')
+    parser.add_argument('--read-only-account',action='store_true',help='Allow account reads but reject every account-follow start')
     parser.add_argument('--no-runner',action='store_true',help='API verification without scheduled signal processing')
     args=parser.parse_args(argv)
     if not 1024<=args.port<=65535: parser.error('Choose a port between 1024 and 65535')
     store=Store(args.data)
     runner=Runner(store)
-    live=LiveManager(store)
+    live=LiveManager(store,execution_allowed=not args.read_only_account)
     try:
         server=ThreadingHTTPServer(('127.0.0.1',args.port),make_handler(store,runner,args.port,live))
     except OSError:

@@ -84,6 +84,19 @@ class LiveTests(unittest.TestCase):
         self.assertNotIn(self.account.key,json.dumps(status))
         self.assertNotIn(self.account.secret,json.dumps(status))
 
+    def test_read_only_account_session_rejects_execution_at_backend(self):
+        manager=LiveManager(self.store,factory=lambda:self.account,execution_allowed=False)
+        try:
+            status=manager.connect()
+            self.assertTrue(status['connected'])
+            self.assertFalse(status['execution_allowed'])
+            with self.assertRaisesRegex(Invalid,'只读'):
+                manager.start('aoying',dict(DEFAULTS,utc_offset_minutes=0),background=False)
+            self.assertFalse(manager.watching)
+            self.assertEqual(self.account.orders,[])
+        finally:
+            manager.shutdown()
+
     def test_demo_signals_cannot_be_armed_for_account_orders(self):
         self.manager.connect()
         c=dict(DEFAULTS,utc_offset_minutes=0)

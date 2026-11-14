@@ -86,3 +86,9 @@ Fill explicit parameters. Validate testnet first. A scheduled session is not a s
 - 更新保留实盘SQLite账本，不上传运行数据或密钥到GitHub。
 
 Keep the backend online and machine awake. Stop does not liquidate; confirmed exchange stops remain. Handle existing exposure before switching/restarting. Durable hosting and monitoring are separate deployment work.
+
+## 正式账户只读入口 / Read-only production connection
+
+在现有项目运行 connect-real-readonly.cmd，会固定选择正式账户，并启用后端只读保护。此会话只读取账户数据；即使直接调用启动接口，后端也拒绝启动账户跟随。密钥在本机终端隐藏输入，不保存到源码或前端。先关闭已有的未连接后台，避免8765端口冲突。输入完成后页面自动打开，再点击验证本机账户连接。
+
+connect-real-readonly.cmd selects production and enables a backend-enforced read-only account session. Keys are entered locally and retained in process memory. No account-follow session can start in this mode. Stop the existing idle service first, enter credentials, then verify the account in the webpage.

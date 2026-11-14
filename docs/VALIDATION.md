@@ -37,3 +37,7 @@ User installation contains the matching Playwright, Greenlet and Chromium/headle
 GitHub Actions run 43638508070 completed successfully for commit 0dc011e1112ff731d0a737830e16e89ccf2f4a6d. Both the independent source test workflow and the Windows build succeeded. The built EXE launched bundled Chromium on local HTML, served the local frontend/API and started disconnected with no account following. The clean runtime ZIP and checksum were uploaded as polo-windows (artifact 14130482921). No Binance account or external trading request was used. No public Release has been published yet.
 
 Run: https://github.com/zfen0061-lang/polo-copytrade/actions/runs/43638508070
+
+## Public preview / 公开预览版
+
+v0.3.0-preview is published with draft=false and prerelease=true, with the Windows runtime ZIP and SHA256 file. Preview build run 43639131046 and draft-release job succeeded. Source start.cmd now uses polo.py so a successful launch opens the local webpage automatically. Online Binance source/account/execution validation remains pending.

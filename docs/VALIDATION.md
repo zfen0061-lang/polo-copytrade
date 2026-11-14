@@ -88,3 +88,13 @@ Three Node tests cover interval scheduling, concurrent manual/automatic requests
 Real-browser verification observes automatic read-only refresh responses and distinct snapshot timestamps
 without manual clicks. No account-follow or order request is involved. The connected backend and public
 observer do not need to restart, preserving the locally entered credentials.
+## Allocated-pool draft and Windows idle-sleep guard
+
+73 Python tests and 3 Node refresh tests pass. The additional tests cover allocated-pool arithmetic,
+losses and occupied funds, draft execution blocking, per-symbol/side full-close preference, and temporary
+AC-only sleep-request activation/release. Arithmetic preview is not certified compounding execution.
+
+The running Windows host accepted the AC system-awake request. The guard heartbeat reports active,
+on AC, display-off allowed and restart prevention false. No power-plan, update-policy, startup task,
+credential persistence or account permissions were modified. A draft was saved locally without a
+transfer or order. The connected read-only account and independent public observer remain running.

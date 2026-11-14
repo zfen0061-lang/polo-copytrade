@@ -277,6 +277,9 @@ class LiveManager:
         c=validate_config(raw)
         if c['utc_offset_minutes'] is None:raise Invalid('请核实源操作时区。')
         trader=self.store.get_trader(trader_id)
+        draft=json.loads(trader.get('execution_draft') or '{}')
+        if draft.get('sizing')=='allocated_pool_compounding':
+            raise Invalid('The compounding allocation is a draft; verified compounding execution and risk settings are still required')
         if json.loads(trader.get('signal_monitor') or '{}').get('mode')=='observe':
             raise Invalid('This trader is locked to signal observation; configure execution separately before starting account following')
         if trader['source']!='binance_public' or not trader['authorized']:

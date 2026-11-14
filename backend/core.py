@@ -115,6 +115,8 @@ class Store:
             # Additive migrations remain readable by an already-running dashboard.
             for table,column,declaration in (
                 ('traders','signal_monitor',"TEXT NOT NULL DEFAULT '{}'"),
+                ('traders','execution_draft',"TEXT NOT NULL DEFAULT '{}'"),
+                ('traders','runtime_guard',"TEXT NOT NULL DEFAULT '{}'"),
                 ('events','source_quantity','TEXT'),
             ):
                 if column not in {r['name'] for r in db.execute('PRAGMA table_info('+table+')')}:

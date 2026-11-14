@@ -34,6 +34,10 @@ export function createAccountUI({api,toast,language}) {
   const signalCard=document.createElement('section');
   signalCard.id='signal-source-status';signalCard.className='card hidden';
   $('#view-live').prepend(signalCard);
+  const draftCard=document.createElement('section');
+  draftCard.id='strategy-draft-status';draftCard.className='card hidden';
+  signalCard.after(draftCard);
+  function record(raw){try{return JSON.parse(raw||'{}');}catch{return {};}}
   function sourceMonitor(trader){try{return JSON.parse(trader?.signal_monitor||'{}');}catch{return {};}}
   signalCard.addEventListener('click',async event=>{
     const button=event.target.closest('button');if(!button)return;
@@ -88,6 +92,12 @@ export function createAccountUI({api,toast,language}) {
   }
   function updateApp(state){
     app=state;
+    const planned=app.traders.find(t=>record(t.execution_draft).status==='draft');
+    draftCard.classList.toggle('hidden',!planned);
+    if(planned){
+      const draft=record(planned.execution_draft);
+      draftCard.innerHTML=`<div class="section-head"><h2>${safe(planned.name)} · ${text('跟单资金草案','Strategy capital draft')}</h2><span class="pill subtle">${text('待启用 · 未划转资金','DRAFT · NO TRANSFER')}</span></div><p>${text('初始分配','Initial allocation')}: <strong>${n(draft.initial_capital_usdt)} USDT</strong> · ${text('使用本策略可用资金滚动复投，不再每次取一半。','Compound the allocated strategy pool; do not halve it on each entry.')}</p><p class="small muted">${text('平仓：只全平对应合约、方向的本程序仓位。加密货币最高10倍，股票类最高5倍。','Close only the matching bot-owned symbol and side. Crypto cap: 10x; equity cap: 5x.')}<br>${text('待完成：止损、亏损上限、股票杠杆规则、已有仓位归属及复投执行验证。当前草案不会触发下单。','Pending: stop, loss cap, equity leverage rule, existing-position ownership and verified compounding execution. This draft cannot send orders.')}</p>`;
+    }
     const tracked=app.traders.find(t=>sourceMonitor(t).mode==='observe');
     signalCard.classList.toggle('hidden',!tracked);
     if(tracked){
@@ -99,6 +109,9 @@ export function createAccountUI({api,toast,language}) {
       const labels={starting:text('正在连接公开页面','Connecting'),running:text('真实信号追踪中','Observing public operations'),paused:text('已暂停信号追踪','Observation paused'),retrying:text('采集重试中','Retrying'),error:text('采集异常，已停止','Collection stopped with error'),stopped:text('信号追踪已停止','Observation stopped')};
       const status=alive?(labels[m.status]||m.status):text('信号追踪已停止，需要重启采集','Observation stopped; restart the collector');
       signalCard.innerHTML=`<div class="section-head"><div><span class="eyebrow">PUBLIC SIGNALS / OBSERVE ONLY</span><h2>${safe(tracked.name)} · ${safe(status)}</h2></div><span class="pill blue">${text('已锁定 · 不下单','LOCKED · NO ORDERS')}</span></div><p class="small muted">${text('每轮采集完成后等待 15 秒；实际发现时间还受页面加载与平台公开延迟影响。','Waits 15 seconds after each poll; page loading and platform publication add delay.')}<br>${text('历史基线','Baseline')}: ${n(m.baseline_count,0)} · ${text('新增操作','New operations')}: ${n(m.new_count,0)} · ${text('最近成功采集','Last successful poll')}: ${m.last_poll?safe(new Date(m.last_poll).toLocaleString()):'—'}</p>${m.last_error?`<p class="form-error">${safe(m.last_error)}</p>`:''}<div class="button-row"><button class="primary" data-signal-action="open">${text('查看真实信号记录','View public signals')}</button><button class="secondary" data-signal-action="toggle" data-trader="${safe(tracked.id)}" ${alive?'':'disabled'}>${tracked.enabled?text('暂停追踪','Pause'):text('恢复追踪','Resume')}</button></div>`;
+      const guard=record(tracked.runtime_guard),awake=!!guard.owner&&Date.now()/1000-guard.heartbeat<90&&guard.status==='active';
+      const guardText=awake?text('接电防自动睡眠已开启，允许息屏；不能阻止手动睡眠、合盖、断电或系统重启。','AC idle-sleep prevention is active; display may turn off. Manual sleep, lid close, power loss and restart are not prevented.'):guard.status==='waiting_for_ac'?text('防自动睡眠等待接电；当前电池模式不会保持唤醒。','Idle-sleep guard is waiting for AC power.'):text('防自动睡眠未运行；睡眠、休眠或重启会中断采集。','Idle-sleep guard is inactive; sleep, hibernation or restart interrupts collection.');
+      const guardNote=document.createElement('p');guardNote.id='runtime-guard-status';guardNote.className='small muted';guardNote.textContent=guardText;signalCard.appendChild(guardNote);
     }
     const select=$('#live-trader-select'),selected=account?.watching?account.trader_id:select.value;
     select.innerHTML='<option value="">'+text('请选择公开数据源交易员','Choose a public-source trader')+'</option>'+app.traders.filter(t=>t.source==='binance_public'&&t.authorized).map(t=>`<option value="${safe(t.id)}">${safe(t.name)}</option>`).join('');

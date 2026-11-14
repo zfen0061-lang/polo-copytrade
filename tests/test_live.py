@@ -114,6 +114,17 @@ class LiveTests(unittest.TestCase):
         self.assertFalse(self.manager.watching)
         self.assertEqual(self.account.orders,[])
 
+    def test_compounding_draft_cannot_silently_use_legacy_fixed_amount_execution(self):
+        from backend.policy_draft import make_compounding_draft
+        self.manager.connect()
+        with self.store.db() as db:
+            db.execute('UPDATE traders SET execution_draft=? WHERE id=?',
+                       (json.dumps(make_compounding_draft('60')),'aoying'))
+        with self.assertRaisesRegex(Invalid,'compounding allocation is a draft'):
+            self.manager.start('aoying',dict(DEFAULTS,utc_offset_minutes=0),background=False)
+        self.assertFalse(self.manager.watching)
+        self.assertEqual(self.account.orders,[])
+
     def test_incomplete_real_parameters_are_not_filled_with_demo_defaults(self):
         self.manager.connect()
         with self.assertRaises(Invalid):self.manager.start('aoying',{'budget':'100'},background=False)

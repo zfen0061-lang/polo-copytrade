@@ -116,3 +116,10 @@ preserving its in-session known-operation cursor. Access restrictions and ordina
 not trigger this browser replacement. Eight targeted observer tests pass, including simulated browser
 failure, new-record detection after replacement and no order creation. The failed observer alone was
 replaced to load the fix; the account session remained connected and read-only.
+## Browser risk preview
+
+The strategy draft card now opens a risk-preview dialog. Five Node tests cover price-versus-margin
+stop conversions, pool-risk sizing and account-refresh scheduling. A real browser opened the dialog,
+verified a full-pool 10x/2%-price scenario and a 30%-margin scenario, saved only to the test browser's
+localStorage and observed no trading requests or JavaScript errors. The stop input starts empty.
+The preview does not update server-side risk parameters or implement live compounding/drawdown control.

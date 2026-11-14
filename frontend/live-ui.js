@@ -1,3 +1,15 @@
+export function previewStopRisk({capital,margin,leverage,stopPercent,stopUnit='price',riskPercent=2,drawdownPercent=10}) {
+  const values=[capital,margin,leverage,stopPercent,riskPercent,drawdownPercent].map(Number);
+  const [pool,stake,multiple,stop,risk,drawdown]=values;
+  if(values.some(x=>!Number.isFinite(x)||x<=0)||stake>pool||!Number.isInteger(multiple)||multiple>10||stop>=100||risk>100||drawdown>100||!['price','margin'].includes(stopUnit))throw Error('Enter valid positive amounts and percentages.');
+  const priceStop=(stopUnit==='margin'?stop/multiple:stop)/100;
+  const expectedLoss=stake*multiple*priceStop;
+  return {priceStopPercent:priceStop*100,marginLossPercent:multiple*priceStop*100,
+    notional:stake*multiple,expectedLoss,poolLossPercent:expectedLoss/pool*100,
+    riskBudget:pool*risk/100,maxMarginForRisk:Math.min(pool,pool*risk/100/(multiple*priceStop)),
+    drawdownLimit:pool*drawdown/100,drawdownStopEquity:pool*(1-drawdown/100)};
+}
+
 export function createAccountRefresher({load,onSuccess,onError,onChange=()=>{},clock=()=>Date.now(),interval=10000}) {
   let task=null,nextAt=0,failures=0;
   return {
@@ -38,6 +50,39 @@ export function createAccountUI({api,toast,language}) {
   draftCard.id='strategy-draft-status';draftCard.className='card hidden';
   signalCard.after(draftCard);
   function record(raw){try{return JSON.parse(raw||'{}');}catch{return {};}}
+  const riskDialog=document.createElement('dialog');
+  riskDialog.id='risk-preview-dialog';
+  riskDialog.innerHTML=`<form id="risk-preview-form"><div class="dialog-head"><h2>${text('风险设置与试算','Risk settings and preview')}</h2><button type="button" class="ghost" data-risk-close>${text('关闭','Close')}</button></div><p class="callout small">${text('仅用于本浏览器的试算草案。保存不会修改后台实盘参数或启动交易。金额均为费用前估算，不代表止损成交保证。','Browser-only preview draft. Saving does not change live parameters or start trading. Estimates exclude fees and do not guarantee stop fills.')}</p><div class="form-grid"><label>${text('策略资金池 / USDT','Strategy pool / USDT')}<input name="capital" type="number" min="0.01" step="0.01" required></label><label>${text('每次投入保证金 / USDT','Margin per entry / USDT')}<input name="margin" type="number" min="0.01" step="0.01" required></label><label>${text('合约类别','Asset category')}<select name="asset"><option value="crypto">${text('加密货币：上限10倍','Crypto: cap 10x')}</option><option value="equity">${text('股票类合约：上限5倍','Equity perps: cap 5x')}</option></select></label><label>${text('杠杆 / 倍','Leverage')}<input name="leverage" type="number" min="1" max="10" step="1" required></label><label>${text('止损百分比的含义','Stop percentage means')}<select name="stopUnit"><option value="price">${text('价格不利变动 %','Adverse price move %')}</option><option value="margin">${text('保证金亏损 %（近似换算）','Margin loss % (approximate)')}</option></select></label><label>${text('止损数值 / %','Stop value / %')}<input name="stopPercent" type="number" min="0.01" max="99" step="0.01" required placeholder="${text('请填写试算值','Enter a preview value')}"></label><label>${text('每笔资金池风险预算 / %（试算）','Pool risk per trade / % (preview)')}<input name="riskPercent" type="number" min="0.01" max="100" step="0.01" required></label><label>${text('资金池最大回撤 / %（试算）','Pool drawdown / % (preview)')}<input name="drawdownPercent" type="number" min="0.01" max="100" step="0.01" required></label></div><div id="risk-preview-output" class="callout small" aria-live="polite"></div><div class="dialog-actions"><button type="button" class="secondary" data-risk-close>${text('关闭','Close')}</button><button type="submit" class="primary">${text('仅保存试算草案','Save preview only')}</button></div></form>`;
+  document.body.appendChild(riskDialog);
+  const riskForm=riskDialog.querySelector('form');
+  function riskValues(){const raw=Object.fromEntries(new FormData(riskForm));return raw;}
+  function renderRiskPreview(){
+    const raw=riskValues(),cap=raw.asset==='equity'?5:10;
+    riskForm.elements.leverage.max=String(cap);
+    const output=$('#risk-preview-output');
+    try{
+      if(Number(raw.leverage)>cap)throw Error(text('超过该类别杠杆上限','Asset leverage cap exceeded'));
+      const result=previewStopRisk(raw);
+      output.textContent=text('名义仓位：','Notional: ')+n(result.notional)+' USDT · '+text('对应价格止损：','Price stop: ')+n(result.priceStopPercent)+'%\n'+text('止损亏损估算：','Estimated stop loss: ')+n(result.expectedLoss)+' USDT · '+n(result.poolLossPercent)+text('% 的策略资金','% of pool')+'\n'+text('按所填单笔风险预算，保证金最多约：','Maximum margin for the entered risk budget: ')+n(result.maxMarginForRisk)+' USDT\n'+text('所填回撤对应亏损：','Entered drawdown loss: ')+n(result.drawdownLimit)+' USDT · '+text('触发净值：','Stop equity: ')+n(result.drawdownStopEquity)+' USDT\n'+text('以上未计手续费、资金费、滑点和最小下单量；回撤高点追踪及自动执行尚未接入。','Excludes fees, funding, slippage and minimum order sizes; high-watermark tracking and automatic execution are not wired.');
+      output.style.whiteSpace='pre-line';
+      if(result.marginLossPercent>=100)output.textContent+='\n'+text('该止损距离对应至少100%的保证金亏损，强平可能先发生；不能把这个价格当作有效保护。','This distance implies at least 100% margin loss; liquidation may happen first. This stop price may not provide protection.');
+      riskForm.querySelector('[type="submit"]').disabled=false;
+    }catch(error){output.textContent=raw.stopPercent?error.message:text('填写止损数值后查看费用前的风险估算。','Enter a stop value to preview risk before costs.');riskForm.querySelector('[type="submit"]').disabled=true;}
+  }
+  riskForm.addEventListener('input',renderRiskPreview);
+  riskForm.elements.asset.addEventListener('change',()=>{riskForm.elements.leverage.value=riskForm.elements.asset.value==='equity'?'5':'10';renderRiskPreview();});
+  riskForm.addEventListener('submit',event=>{event.preventDefault();try{const raw=riskValues();previewStopRisk(raw);localStorage.setItem('polo-risk-preview',JSON.stringify(raw));toast(text('试算草案已保存在本浏览器，实盘配置未改变。','Preview saved in this browser. Live configuration unchanged.'));riskDialog.close();}catch(error){toast(error.message);}});
+  riskDialog.addEventListener('click',event=>{if(event.target.closest('[data-risk-close]'))riskDialog.close();});
+  draftCard.addEventListener('click',event=>{
+    if(!event.target.closest('[data-open-risk]'))return;
+    const planned=app?.traders.find(t=>record(t.execution_draft).status==='draft');
+    const draft=record(planned?.execution_draft);
+    let stored={};try{stored=record(localStorage.getItem('polo-risk-preview'));}catch{}
+    const initial=draft.initial_capital_usdt||'60';
+    const values={capital:initial,margin:initial,asset:'crypto',leverage:'10',stopUnit:'price',stopPercent:'',riskPercent:'2',drawdownPercent:'10',...stored};
+    for(const [key,value] of Object.entries(values))if(riskForm.elements[key])riskForm.elements[key].value=value;
+    renderRiskPreview();riskDialog.showModal();
+  });
   function sourceMonitor(trader){try{return JSON.parse(trader?.signal_monitor||'{}');}catch{return {};}}
   signalCard.addEventListener('click',async event=>{
     const button=event.target.closest('button');if(!button)return;
@@ -99,6 +144,7 @@ export function createAccountUI({api,toast,language}) {
       draftCard.innerHTML=`<div class="section-head"><h2>${safe(planned.name)} · ${text('跟单资金草案','Strategy capital draft')}</h2><span class="pill subtle">${text('待启用 · 未划转资金','DRAFT · NO TRANSFER')}</span></div><p>${text('初始分配','Initial allocation')}: <strong>${n(draft.initial_capital_usdt)} USDT</strong> · ${text('使用本策略可用资金滚动复投，不再每次取一半。','Compound the allocated strategy pool; do not halve it on each entry.')}</p><p class="small muted">${text('平仓：只全平对应合约、方向的本程序仓位。加密货币最高10倍，股票类最高5倍。','Close only the matching bot-owned symbol and side. Crypto cap: 10x; equity cap: 5x.')}<br>${text('待完成：止损、亏损上限、股票杠杆规则、已有仓位归属及复投执行验证。当前草案不会触发下单。','Pending: stop, loss cap, equity leverage rule, existing-position ownership and verified compounding execution. This draft cannot send orders.')}</p>`;
     }
     const tracked=app.traders.find(t=>sourceMonitor(t).mode==='observe');
+    if(planned){const open=document.createElement('button');open.type='button';open.className='secondary';open.dataset.openRisk='true';open.textContent=text('风险设置 / 试算','Risk settings / preview');draftCard.appendChild(open);}
     signalCard.classList.toggle('hidden',!tracked);
     if(tracked){
       const m=sourceMonitor(tracked),alive=!!m.owner&&Date.now()/1000-m.heartbeat<180;

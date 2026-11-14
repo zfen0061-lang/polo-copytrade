@@ -4,7 +4,22 @@ import test from 'node:test';
 
 // Load the existing browser module without requiring Node on installed app users' machines.
 const code=await readFile(new URL('../frontend/live-ui.js',import.meta.url),'utf8');
-const {createAccountRefresher}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+const {createAccountRefresher,previewStopRisk}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+
+test('margin ROI stops convert to price distance according to leverage',()=>{
+  const crypto=previewStopRisk({capital:60,margin:60,leverage:10,stopPercent:30,stopUnit:'margin'});
+  assert.equal(crypto.priceStopPercent,3);assert.equal(crypto.expectedLoss,18);
+  const equity=previewStopRisk({capital:60,margin:60,leverage:5,stopPercent:50,stopUnit:'margin'});
+  assert.equal(equity.priceStopPercent,10);assert.equal(equity.expectedLoss,30);
+});
+
+test('position sizing reconciles a price stop with a pool risk budget',()=>{
+  const result=previewStopRisk({capital:60,margin:60,leverage:10,stopPercent:2,riskPercent:2,drawdownPercent:10});
+  assert.equal(result.expectedLoss,12);assert.equal(result.poolLossPercent,20);
+  assert.ok(Math.abs(result.maxMarginForRisk-6)<1e-9);
+  assert.equal(result.drawdownLimit,6);assert.equal(result.drawdownStopEquity,54);
+  assert.throws(()=>previewStopRisk({capital:60,margin:61,leverage:10,stopPercent:2}));
+});
 
 test('idle accounts refresh automatically on the interval',async()=>{
   let clock=0,calls=0,updated;

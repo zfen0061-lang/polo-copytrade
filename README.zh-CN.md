@@ -16,7 +16,7 @@
 
 ## 给其他人使用：Windows 运行包
 
-已准备便携入口和 GitHub Actions 打包流程，**尚未生成或验证首个 EXE 成品**。构建通过并发布 Release 后，普通用户下载运行 ZIP、完整解压、双击 PoloCopyTrade.exe 即可；无需分别安装 Python、采集库或 Chromium。当前源码 ZIP 仍需开发环境。
+首个 Windows x64 EXE 已构建成功，通过源码测试、内置浏览器和本地 HTTP 启动检查。[当前预览包下载入口](https://github.com/zfen0061-lang/polo-copytrade/actions/runs/43638508070)：登录 GitHub 后下载 polo-windows，解压后再解压其中的 PoloCopyTrade-Windows-x64.zip，双击 PoloCopyTrade.exe。无需分别安装 Python、采集库或 Chromium。当前仍是临时工作流产物，公开 Release 下载尚待发布；币安在线接口仍需验证。源码 ZIP 仍需开发环境。
 
 运行包默认打开未连接的账户工作台，密钥及交易参数由每个人自己在本机配置，不自动交易。持久数据保存在用户本地目录，不写进可执行文件或随源码共享。
 

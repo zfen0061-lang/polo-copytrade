@@ -14,7 +14,7 @@ A local full-stack app for observing public Binance lead-trader operations, conf
 
 ## Windows distribution
 
-A portable launcher and GitHub Windows build workflow are included. **No first EXE build has been produced or verified yet.** After a successful build and published release, end users download the runtime ZIP, extract the entire folder and double-click PoloCopyTrade.exe; Python, Playwright and Chromium are bundled. The source ZIP still needs a development environment.
+The first Windows x64 EXE build passed GitHub source tests, bundled-browser checks and local HTTP startup checks. [Download the current preview from this successful Actions run](https://github.com/zfen0061-lang/polo-copytrade/actions/runs/43638508070) (GitHub sign-in required; temporary workflow artifact named polo-windows). Extract the artifact, then extract its PoloCopyTrade-Windows-x64.zip and launch PoloCopyTrade.exe. Python, Playwright and Chromium are bundled. A permanent public Release download is still pending; online Binance access has not been certified. The source ZIP still needs a development environment.
 
 Users configure their own keys/rules locally; account execution starts off. Runtime ledgers live in the current Windows user profile. See [portable usage](docs/PORTABLE.md) and [publishing](docs/PUBLISH.md).
 

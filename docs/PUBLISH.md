@@ -48,3 +48,9 @@ Do not announce an EXE before the build and tests pass. Verify a clean target ma
 若连接返回403写入拒绝，维护者可在已有本地Git项目中双击 publish-github.cmd，按Git的浏览器提示登录账号。脚本只推送已提交的main，不自动暂存文件，不强制推送，不上传忽略的运行数据。源码ZIP不含.git，不能在新解压的源码目录直接使用此脚本。
 
 If integration writes are denied, run publish-github.cmd from this existing Git working tree and complete Git Credential Manager sign-in locally. It pushes committed main only, without staging files or force-pushing. A source ZIP does not contain Git history.
+
+## 首个预览版本 / First preview version
+
+已有本地项目的维护者可以运行 publish-preview.cmd 推送已准备的 v0.3.0-preview 标签。GitHub 将重新构建检查后创建草稿 Release。检查草稿的附件和说明后再发布。此脚本不启动交易，也不自动发布草稿。
+
+From the prepared local Git project, publish-preview.cmd pushes main and the prepared preview tag. CI builds and checks the package and prepares a draft release; review its assets before publishing it. The script never starts trading.

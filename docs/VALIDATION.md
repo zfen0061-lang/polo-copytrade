@@ -31,3 +31,9 @@ A subprocess smoke check started the backend on port 8766 with a temporary datab
 Portable entry point, persistent per-user data paths, local file-only dependency checking and GitHub Windows build/draft-release workflow are implemented. The collector file check no longer starts a Playwright driver, which could hang under execution restrictions. Windows packaging and online exchange validation have not run. Source tests include package-data separation, exact browser revisions, required headless shell, launcher behavior and runtime-data exclusion from archives.
 
 User installation contains the matching Playwright, Greenlet and Chromium/headless-shell files. The execution sandbox uses a different default cache directory; checking the actual user browser cache succeeds. This is a dependency-file check, not a browser-launch or trading check.
+
+## First Windows CI result / 首次 Windows 构建结果
+
+GitHub Actions run 43638508070 completed successfully for commit 0dc011e1112ff731d0a737830e16e89ccf2f4a6d. Both the independent source test workflow and the Windows build succeeded. The built EXE launched bundled Chromium on local HTML, served the local frontend/API and started disconnected with no account following. The clean runtime ZIP and checksum were uploaded as polo-windows (artifact 14130482921). No Binance account or external trading request was used. No public Release has been published yet.
+
+Run: https://github.com/zfen0061-lang/polo-copytrade/actions/runs/43638508070

@@ -92,3 +92,14 @@ Keep the backend online and machine awake. Stop does not liquidate; confirmed ex
 在现有项目运行 connect-real-readonly.cmd，会固定选择正式账户，并启用后端只读保护。此会话只读取账户数据；即使直接调用启动接口，后端也拒绝启动账户跟随。密钥在本机终端隐藏输入，不保存到源码或前端。先关闭已有的未连接后台，避免8765端口冲突。输入完成后页面自动打开，再点击验证本机账户连接。
 
 connect-real-readonly.cmd selects production and enables a backend-enforced read-only account session. Keys are entered locally and retained in process memory. No account-follow session can start in this mode. Stop the existing idle service first, enter credentials, then verify the account in the webpage.
+## Account auto-refresh / 账户自动刷新
+
+With the dashboard page open, a connected idle/read-only account automatically requests a new
+balance/position snapshot about every 10 seconds. The timestamp reports the last successful Binance
+account snapshot, not the page-render time. Overlapping refreshes share one request. Failures retain the
+last successful data, display an error, and back off automatically up to 60 seconds between attempts.
+The following worker refreshes account data independently when account following is active.
+
+只读模式也会在页面打开时自动读取账户，不再需要反复点击刷新。余额没有变化时，金额可以保持不动，
+但“账户最近成功更新”时间应继续推进。读取过程中、读取失败时都有状态提示；手动刷新按钮仍可使用。
+关闭网页会停止这一路账户展示刷新，后台的熬鹰资本公开信号观察器仍独立运行。

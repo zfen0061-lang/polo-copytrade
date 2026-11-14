@@ -1,3 +1,22 @@
+export function createAccountRefresher({load,onSuccess,onError,onChange=()=>{},clock=()=>Date.now(),interval=10000}) {
+  let task=null,nextAt=0,failures=0;
+  return {
+    get busy(){return task!==null;},
+    request(force=false){
+      if(task)return task;
+      if(!force&&clock()<nextAt)return Promise.resolve(null);
+      task=Promise.resolve().then(load).then(result=>{
+        failures=0;onSuccess(result);return result;
+      }).catch(error=>{failures+=1;onError(error);return null;}).finally(()=>{
+        nextAt=clock()+Math.min(60000,interval*2**failures);
+        task=null;onChange();
+      });
+      onChange();
+      return task;
+    },
+  };
+}
+
 export function createAccountUI({api,toast,language}) {
   const $=s=>document.querySelector(s);
   const text=(z,e)=>language()==='zh'?z:e;
@@ -5,6 +24,13 @@ export function createAccountUI({api,toast,language}) {
   const n=(x,d=2)=>Number(x||0).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
   let account=null,app=null,view='live';
   let previousSignal=null;
+  let accountRefreshError='';
+  const accountRefresh=createAccountRefresher({
+    load:()=>api('/api/live/refresh',{}),
+    onSuccess:state=>{account=state;accountRefreshError='';},
+    onError:error=>{accountRefreshError=text('账户自动刷新失败，将稍后重试：','Account refresh failed; retrying: ')+error.message;},
+    onChange:()=>render(),
+  });
   const signalCard=document.createElement('section');
   signalCard.id='signal-source-status';signalCard.className='card hidden';
   $('#view-live').prepend(signalCard);
@@ -24,9 +50,9 @@ export function createAccountUI({api,toast,language}) {
     $('#account-environment').className='pill '+(connected?(live?'blue':'green'):'subtle');
     $('#account-empty').classList.toggle('hidden',connected);
     $('#real-metrics').classList.toggle('hidden',!connected);
-    $('#account-error').textContent=account.error||'';
+    $('#account-error').textContent=accountRefreshError||account.error||'';
     $('#connect-account').disabled=account.watching;
-    $('#refresh-account').disabled=!connected;
+    $('#refresh-account').disabled=!connected||accountRefresh.busy;
     $('#configure-live').disabled=readOnly||!connected||account.watching||!$('#live-trader-select').value;
     $('#pause-real').disabled=!account.watching;
     $('#stop-real').disabled=!account.watching;
@@ -38,7 +64,7 @@ export function createAccountUI({api,toast,language}) {
     $('#live-parameters').textContent=c?text('本次会话：','Session: ')+`${c.budget} USDT · ${c.order_margin} USDT/entry · ${c.leverage}× · ${n(Number(c.max_deviation)*100)}% max deviation · ${n(Number(c.stop_loss_pct)*100)}% price stop`:'';
     const a=account.account;
     $('#real-metrics').innerHTML=a?[[text('钱包余额','Wallet balance'),a.wallet_balance],[text('账户权益','Account equity'),a.equity],[text('可用余额','Available'),a.available],[text('未实现盈亏','Unrealized P&L'),a.unrealized]].map(([label,value])=>`<div class="metric"><div class="metric-top">${safe(label)}</div><div class="metric-value">${n(value)}<small>USDT</small></div></div>`).join(''):'';
-    $('#account-updated').textContent=a?text('账户快照更新于 ','Account snapshot at ')+new Date(a.updated).toLocaleString()+text('；启动跟随后约每5秒及操作检查后刷新。','; refreshed around every 5 seconds and after signal checks while following.') :'';
+    $('#account-updated').textContent=a?text('账户最近成功更新：','Last successful account update: ')+new Date(a.updated).toLocaleString()+(accountRefresh.busy?text(' · 正在读取币安账户…',' · Reading Binance account…'):accountRefreshError?text(' · 刷新异常，稍后自动重试',' · Refresh failed; automatic retry pending'):account.watching?text(' · 跟随运行期间由后台更新',' · Updated by the following worker'):text(' · 页面打开时约每 10 秒自动刷新',' · Automatically refreshed about every 10 seconds while this page is open')):'';
     $('#actual-positions').innerHTML=a?.positions?.length?a.positions.map(p=>`<tr><td><strong>${safe(p.symbol)}</strong> ${Number(p.positionAmt)>0?text('多','LONG'):text('空','SHORT')}</td><td>${n(Math.abs(Number(p.positionAmt)),6)}</td><td>${n(p.entryPrice,4)}</td><td>${n(p.markPrice,4)}</td><td class="${Number(p.unRealizedProfit)>=0?'positive':'negative'}">${n(p.unRealizedProfit)}</td><td>${n(p.liquidationPrice,4)}</td></tr>`).join(''):`<tr><td class="empty" colspan="6">${connected?text('账户当前没有仓位。','No open positions on the connected account.'):text('连接账户后显示实际仓位。','Connect to display actual account positions.')}</td></tr>`;
     $('#actual-orders').innerHTML=account.orders?.length?account.orders.map(j=>`<tr><td>${safe(j.id.slice(0,12))}</td><td>${safe(j.order?.symbol||'—')} ${safe(j.order?.side||'')}</td><td>${safe(j.order?.type||'—')}</td><td>${j.result?.executedQty?n(j.result.executedQty,6):'—'}</td><td>${j.result?.avgPrice?n(j.result.avgPrice,4):'—'}</td><td>${safe(j.state)}<span class="cell-sub">${safe(j.reason||j.result?.status||'')}</span></td></tr>`).join(''):`<tr><td class="empty" colspan="6">${text('没有账户执行记录；模拟订单在模拟实验室。','No account execution records. Paper orders are in the paper lab.')}</td></tr>`;
     if(view==='live'){
@@ -54,7 +80,11 @@ export function createAccountUI({api,toast,language}) {
     }
   }
   async function refresh(){
-    try{account=await api('/api/live/state');render();}catch(e){$('#account-error').textContent=e.message;}
+    try{
+      account=await api('/api/live/state');render();
+      // Keep source-log rendering responsive while account reads are in flight.
+      if(account.connected&&!account.watching)void accountRefresh.request();
+    }catch(e){$('#account-error').textContent=e.message;}
   }
   function updateApp(state){
     app=state;
@@ -77,7 +107,8 @@ export function createAccountUI({api,toast,language}) {
   }
   async function action(path,payload={}){try{account=await api(path,payload);render();}catch(e){toast(e.message);await refresh();}}
   $('#connect-account').addEventListener('click',()=>action('/api/live/connect'));
-  $('#refresh-account').addEventListener('click',()=>action('/api/live/refresh'));
+  $('#refresh-account').addEventListener('click',()=>{if(account?.connected)void accountRefresh.request(true);});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refresh();});
   $('#show-connect-help').addEventListener('click',()=>$('#connect-guide').showModal());
   $('#close-connect-guide').addEventListener('click',()=>$('#connect-guide').close());
   $('#pause-real').addEventListener('click',()=>action('/api/live/pause',{paused:account.entries_enabled}));

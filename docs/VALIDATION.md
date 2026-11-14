@@ -76,3 +76,15 @@ behavior are covered with synthetic collector fixtures.
 69 source tests pass. Browser checks confirmed the locked observer card, ten signal rows, source quantities,
 disabled account execution controls and no JavaScript errors or mutating requests. This is a source update;
 the previously published portable release has not been rebuilt with the observer.
+## Idle account snapshot refresh
+
+Fixed a stale-data issue: the dashboard previously polled the cached account state, while idle/read-only
+sessions fetched a fresh Binance snapshot only after a manual click. The existing refresh endpoint is
+now called automatically from the open dashboard about every 10 seconds without blocking signal rendering.
+Single-flight requests prevent overlap, failures back off and keep the previous successful snapshot, and
+the visible status distinguishes refreshing, failed refresh and last successful account update.
+
+Three Node tests cover interval scheduling, concurrent manual/automatic requests and failure recovery.
+Real-browser verification observes automatic read-only refresh responses and distinct snapshot timestamps
+without manual clicks. No account-follow or order request is involved. The connected backend and public
+observer do not need to restart, preserving the locally entered credentials.

@@ -681,6 +681,7 @@
                                                                                                                                                                                                                                                                                                                       .chart-wrap svg{
                                                                                                                                                                                                                                                                                                                         height:185px}
                                                                                                                                                                                                                                                                                                                       }
+.startup-status{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:1000;max-width:calc(100% - 32px);padding:12px 18px;background:#fff4d5;color:#644a0c;border:1px solid #e6cf8e;border-radius:12px;box-shadow:0 6px 20px #14263b20;font-size:13px}
 .polo-mark{width:42px;height:42px;border-radius:12px;object-fit:cover;flex:none;box-shadow:0 3px 15px #0002}
 .brand>span{font-size:25px;letter-spacing:-.5px}
 .brand-sub{font-size:8px}

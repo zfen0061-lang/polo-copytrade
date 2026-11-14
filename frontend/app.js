@@ -229,5 +229,6 @@ $('#trader-cards').addEventListener('click',e=>{
 $('#live-info').addEventListener('click',()=>$('#info-dialog').showModal());
 $('#close-info').addEventListener('click',()=>$('#info-dialog').close());
 setLanguage();
+$('#startup-status')?.remove();
 session().then(refresh).catch(e=>toast(e.message));
 setInterval(refresh,2000);

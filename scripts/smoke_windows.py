@@ -40,6 +40,32 @@ def main():
             with urllib.request.urlopen('http://127.0.0.1:18765/', timeout=2) as response:
                 if b'Polo CopyTrade' not in response.read():
                     raise RuntimeError('Packaged frontend missing')
+            os.environ['PLAYWRIGHT_BROWSERS_PATH'] = str(exe.parent / '_internal/playwright/driver/package/.local-browsers')
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as runtime:
+                browser = runtime.chromium.launch(headless=True)
+                try:
+                    page = browser.new_page()
+                    page.goto('http://127.0.0.1:18765/', wait_until='domcontentloaded')
+                    page.wait_for_function(
+                        "Array.from(document.querySelectorAll('.polo-mark, .account-placeholder img')).length >= 2 && "
+                        "Array.from(document.querySelectorAll('.polo-mark, .account-placeholder img')).every(i => i.complete && i.naturalWidth > 0)",
+                        timeout=15000,
+                    )
+                    page.locator('.nav-item[data-view="settings"]').click()
+                    if not page.locator('#view-settings').is_visible():
+                        raise RuntimeError('Packaged navigation did not respond')
+                    page.locator('#add-trader').click()
+                    if not page.locator('#trader-dialog').is_visible():
+                        raise RuntimeError('Packaged trader dialog did not open')
+                    page.locator('#close-dialog').click()
+                    page.locator('.nav-item[data-view="live"]').click()
+                    page.locator('#show-connect-help').click()
+                    if not page.locator('#connect-guide').is_visible():
+                        raise RuntimeError('Packaged account help did not open')
+                    page.locator('#close-connect-guide').click()
+                finally:
+                    browser.close()
         finally:
             process.terminate()
             try:

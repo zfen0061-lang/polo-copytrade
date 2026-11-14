@@ -45,3 +45,9 @@ v0.3.0-preview is published with draft=false and prerelease=true, with the Windo
 ## Desktop installer checks
 
 58 source tests pass. Added release-download checksum and archive extraction checks, including traversal and symlink rejection. The Windows icon was converted to ICO and read back at 256x256. A test shortcut was created only inside the writable workspace, and launcher PowerShell syntax was checked. The actual Desktop/user program directory installation must be run by the user; no desktop shortcut was created there by the agent.
+
+## Restored live local UI / 本机界面恢复
+
+The browser was connecting to a legacy CopyTradeStudio/0.1 backend while reading newer frontend files. The legacy service returned 404 for live-ui.js, polo-logo.png and api/live/state. The verified legacy Python backend was stopped and replaced with PoloCopyTrade/0.3.0. All three resources then returned 200. A real headless browser loaded the logo, switched navigation, opened/closed the trader dialog and opened/closed account help, with no JavaScript errors or failed requests. No account connection button was clicked and no order request was sent. Current account state remains unconfigured, disconnected and not following.
+
+Added a visible startup notice until frontend handlers are installed and added navigation/dialog checks to the packaged browser smoke test. No logo file modification was needed.

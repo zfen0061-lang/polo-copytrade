@@ -1,4 +1,4 @@
-# Polo CopyTrade · v0.2
+# Polo CopyTrade · v0.2.1
 
 中文 · [English](README.md)
 
@@ -28,7 +28,7 @@ python -m backend.server
 
 ## 接账户
 
-详见 [中英文账户操作指南](docs/ACCOUNT_GUIDE.md)。公开采集和账户跟随需安装依赖：
+详见 [中英文账户操作指南](docs/ACCOUNT_GUIDE.md)。公开采集和账户跟随需安装依赖。Windows 双击 setup.cmd 自动创建项目虚拟环境、安装 Playwright 和 Chromium，完成后双击 check.cmd 查看缺项。两者都不读取密钥、不连接账户、不下单。也可手动执行：
 
 ~~~powershell
 python -m venv .venv

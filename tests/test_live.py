@@ -94,6 +94,16 @@ class LiveTests(unittest.TestCase):
         self.manager.connect()
         with self.assertRaises(Invalid):self.manager.start('aoying',{'budget':'100'},background=False)
 
+    def test_missing_collector_is_reported_before_starting_account_session(self):
+        self.manager.connect()
+        trader=self.store.get_trader('aoying')
+        self.store.save_trader(dict(trader,source='binance_public',authorized=True),'aoying')
+        with patch('backend.doctor.collector_status',return_value=dict(installed=False,chromium=False,error='')):
+            with self.assertRaisesRegex(Invalid,'setup.cmd'):
+                self.manager.start('aoying',dict(DEFAULTS,utc_offset_minutes=0),background=False)
+        self.assertFalse(self.manager.watching)
+        self.assertEqual(self.account.orders,[])
+
     def test_open_fill_gets_confirmed_exchange_close_all_stop(self):
         self.engine.on_poll([operation('open'),self.baseline])
         stop=next(iter(self.account.stops.values()))

@@ -1,4 +1,4 @@
-# Polo CopyTrade · v0.2
+# Polo CopyTrade · v0.2.1
 
 [中文](README.zh-CN.md) · English
 
@@ -22,7 +22,7 @@ python -m backend.server
 
 Open [http://127.0.0.1:8765](http://127.0.0.1:8765) or double-click `start.cmd`. Stop with Ctrl+C. Open `copytrade-studio.code-workspace` in VS Code. **After updating, restart the old Python server before refreshing the browser.**
 
-For public collection and account following:
+For public collection and account following, run setup.cmd on Windows to prepare the project environment and install Playwright/Chromium. Run check.cmd for a local readiness report; neither script connects an account or places an order. Manual commands:
 
 ~~~powershell
 python -m venv .venv

@@ -8,6 +8,10 @@ Stop the old server, back up data/, unpack separately and keep account ledgers. 
 
 ## 2. 安装 / Install
 
+Windows 双击 setup.cmd 完成依赖安装，再双击 check.cmd 看本机检查结果。安装失败会显示错误，不会自动启动账户。其他平台或手动安装如下：
+
+On Windows, run setup.cmd then check.cmd. Setup reports errors and does not start an account session. Manual steps:
+
 ~~~powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-collector.txt

@@ -23,7 +23,7 @@ def make_handler(store,runner,port,live=None):
     token=secrets.token_urlsafe(32)
     allowed_hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
     class Handler(BaseHTTPRequestHandler):
-        server_version='PoloCopyTrade/0.2'
+        server_version='PoloCopyTrade/0.2.1'
 
         def log_message(self,format,*args):
             # Request paths only; never log bodies, configuration or credentials.

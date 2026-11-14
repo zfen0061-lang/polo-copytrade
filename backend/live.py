@@ -277,6 +277,11 @@ class LiveManager:
         if trader['source']!='binance_public' or not trader['authorized']:
             raise Invalid('实盘只接收已核实权限的公开数据源，不能连接演示信号。')
         if trader['enabled']:raise Invalid('请先暂停该交易员的模拟采集，避免重复采集同一来源。')
+        if self.collector_factory is None:
+            from .doctor import collector_status
+            setup=collector_status()
+            if not setup['installed'] or not setup['chromium'] or setup['error']:
+                raise Invalid('公开采集环境尚未准备好。请先在项目文件夹运行 setup.cmd，再用 check.cmd 检查；尚未启动账户跟随。')
         with self.lock:
             if self.watching:raise Invalid('同一账户只允许一个实盘跟随会话。先停止旧会话并处理仓位后再切换。')
             self.trader_id=trader_id

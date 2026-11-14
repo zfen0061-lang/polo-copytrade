@@ -1,4 +1,4 @@
-# Polo CopyTrade · v0.2.1
+# Polo CopyTrade · v0.3.0
 
 [中文](README.zh-CN.md) · English
 
@@ -11,6 +11,12 @@ A local full-stack app for observing public Binance lead-trader operations, conf
 | Account: Production | Actual balances and real exchange orders after explicit start |
 | Account: Testnet | Binance futures testnet API orders with separate testnet keys |
 | Paper lab | Synthetic or public observations with local simulated fills |
+
+## Windows distribution
+
+A portable launcher and GitHub Windows build workflow are included. **No first EXE build has been produced or verified yet.** After a successful build and published release, end users download the runtime ZIP, extract the entire folder and double-click PoloCopyTrade.exe; Python, Playwright and Chromium are bundled. The source ZIP still needs a development environment.
+
+Users configure their own keys/rules locally; account execution starts off. Runtime ledgers live in the current Windows user profile. See [portable usage](docs/PORTABLE.md) and [publishing](docs/PUBLISH.md).
 
 ## Run
 

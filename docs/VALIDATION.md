@@ -23,3 +23,11 @@ The execution environment rejected local HTTP TCP clients with Windows socket er
 The project virtual environment was created. Local doctor reports dashboard ready but public collection unavailable: Playwright is not installed. The current package source returned no matching distribution; no collector was installed. setup.cmd and check.cmd allow installation and diagnosis from the user terminal. Missing dependencies are reported before an account-follow session starts. Online exchange and browser validation remain pending.
 
 A subprocess smoke check started the backend on port 8766 with a temporary database and no scheduler. Startup reported account execution OFF and the process stayed running until deliberately stopped. This verifies process startup, not a TCP client, browser rendering or online account access.
+
+## v0.3 distribution work
+
+53 local source tests pass (44 existing tests plus 9 packaging/runtime-path tests). This does not count a Windows EXE build: no EXE has been produced or run, and the GitHub workflow has not been executed.
+
+Portable entry point, persistent per-user data paths, local file-only dependency checking and GitHub Windows build/draft-release workflow are implemented. The collector file check no longer starts a Playwright driver, which could hang under execution restrictions. Windows packaging and online exchange validation have not run. Source tests include package-data separation, exact browser revisions, required headless shell, launcher behavior and runtime-data exclusion from archives.
+
+User installation contains the matching Playwright, Greenlet and Chromium/headless-shell files. The execution sandbox uses a different default cache directory; checking the actual user browser cache succeeds. This is a dependency-file check, not a browser-launch or trading check.

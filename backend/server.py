@@ -9,13 +9,16 @@ from pathlib import Path
 import secrets
 import signal
 import sys
+import threading
+import webbrowser
 from urllib.parse import urlsplit
 
 from .core import Invalid,Store
 from .feeds import Runner
 from .live import LiveManager
+from .paths import VERSION,resource_root,default_data_dir
 
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=resource_root()
 
 
 def make_handler(store,runner,port,live=None):
@@ -23,7 +26,7 @@ def make_handler(store,runner,port,live=None):
     token=secrets.token_urlsafe(32)
     allowed_hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
     class Handler(BaseHTTPRequestHandler):
-        server_version='PoloCopyTrade/0.2.1'
+        server_version='PoloCopyTrade/'+VERSION
 
         def log_message(self,format,*args):
             # Request paths only; never log bodies, configuration or credentials.
@@ -151,12 +154,13 @@ def make_handler(store,runner,port,live=None):
     return Handler
 
 
-def main():
+def main(argv=None):
     parser=argparse.ArgumentParser(description='Polo CopyTrade — separate account and paper workspaces')
     parser.add_argument('--port',type=int,default=8765)
-    parser.add_argument('--data',type=Path,default=ROOT/'data'/'studio.sqlite3')
+    parser.add_argument('--data',type=Path,default=default_data_dir()/'studio.sqlite3')
+    parser.add_argument('--open-browser',action='store_true',help='Open the system browser after binding successfully')
     parser.add_argument('--no-runner',action='store_true',help='API verification without scheduled signal processing')
-    args=parser.parse_args()
+    args=parser.parse_args(argv)
     if not 1024<=args.port<=65535: parser.error('Choose a port between 1024 and 65535')
     store=Store(args.data)
     runner=Runner(store)
@@ -168,6 +172,8 @@ def main():
     if not args.no_runner: runner.start()
     print(f'Polo CopyTrade: http://127.0.0.1:{args.port}',flush=True)
     print('Account execution is OFF at startup. The paper lab is separate. Press Ctrl+C to stop.',flush=True)
+    if args.open_browser:
+        threading.Thread(target=webbrowser.open,args=(f'http://127.0.0.1:{args.port}',),daemon=True).start()
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

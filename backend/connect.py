@@ -3,7 +3,7 @@ import getpass
 import os
 
 
-def main():
+def main(argv=None):
     print('Polo CopyTrade — local account connection / 本机账户连接')
     print('Keys remain in this process. They are not saved to source files or sent to chat.')
     choice=input('Environment: 1 = production 真实账户, 2 = Binance testnet 测试网 [2]: ').strip() or '2'
@@ -15,7 +15,7 @@ def main():
         raise SystemExit('Both values are required')
     print('Opening the server does not place orders. Connect, inspect, configure and explicitly start in the dashboard.')
     from .server import main as server_main
-    server_main()
+    server_main(argv)
 
 
 if __name__=='__main__':main()

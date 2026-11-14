@@ -112,6 +112,13 @@ class Store:
               message TEXT,created TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS equity(id INTEGER PRIMARY KEY AUTOINCREMENT,value TEXT,created TEXT);
             ''')
+            # Additive migrations remain readable by an already-running dashboard.
+            for table,column,declaration in (
+                ('traders','signal_monitor',"TEXT NOT NULL DEFAULT '{}'"),
+                ('events','source_quantity','TEXT'),
+            ):
+                if column not in {r['name'] for r in db.execute('PRAGMA table_info('+table+')')}:
+                    db.execute('ALTER TABLE '+table+' ADD COLUMN '+column+' '+declaration)
             db.execute("INSERT OR IGNORE INTO settings VALUES ('paused','false')")
             db.execute("INSERT OR IGNORE INTO settings VALUES ('starting_balance','10000')")
             if not db.execute('SELECT 1 FROM traders LIMIT 1').fetchone():
@@ -253,6 +260,8 @@ class Store:
 
     def process(self, trader_id, event, bid, ask, baseline=False):
         t = self.get_trader(trader_id)
+        if json.loads(t.get('signal_monitor') or '{}').get('mode')=='observe':
+            raise Invalid('This trader is configured for signal observation only; paper execution is disabled')
         c = t['config']
         if event.get('action') not in ACTIONS:
             raise Invalid('Unknown action / 操作类型未知')

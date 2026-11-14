@@ -103,6 +103,17 @@ class LiveTests(unittest.TestCase):
         with self.assertRaises(Invalid):self.manager.start('aoying',c,background=False)
         self.assertEqual(self.account.orders,[])
 
+    def test_signal_observer_cannot_be_started_as_an_account_execution_session(self):
+        self.manager.connect()
+        trader=self.store.get_trader('aoying')
+        self.store.save_trader(dict(trader,source='binance_public',authorized=True),'aoying')
+        with self.store.db() as db:
+            db.execute('UPDATE traders SET signal_monitor=? WHERE id=?',(json.dumps({'mode':'observe'}),'aoying'))
+        with self.assertRaisesRegex(Invalid,'locked to signal observation'):
+            self.manager.start('aoying',dict(DEFAULTS,utc_offset_minutes=0),background=False)
+        self.assertFalse(self.manager.watching)
+        self.assertEqual(self.account.orders,[])
+
     def test_incomplete_real_parameters_are_not_filled_with_demo_defaults(self):
         self.manager.connect()
         with self.assertRaises(Invalid):self.manager.start('aoying',{'budget':'100'},background=False)

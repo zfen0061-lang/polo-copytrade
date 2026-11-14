@@ -47,16 +47,20 @@ def parse_public(text, year, offset):
 
 
 class PublicCollector:
-    def __init__(self, url, offset):
+    def __init__(self, url, offset, *, timezone_id=None, expected_name=None):
         from playwright.sync_api import sync_playwright
         self.runtime = sync_playwright().start()
         try:
             self.browser = self.runtime.chromium.launch(headless=True)
-            self.page = self.browser.new_page(locale='zh-CN')
+            options=dict(locale='zh-CN')
+            if timezone_id:
+                options['timezone_id']=timezone_id
+            self.page = self.browser.new_page(**options)
         except Exception:
             self.runtime.stop()
             raise
         self.url, self.offset = url, offset
+        self.expected_name=expected_name
 
     def close(self):
         try:
@@ -65,10 +69,24 @@ class PublicCollector:
             self.runtime.stop()
 
     def fetch(self, known):
-        self.page.goto(self.url, wait_until='domcontentloaded', timeout=35000)
-        self.page.get_by_role('tab', name='最新操作记录', exact=True).click(timeout=15000)
+        response=self.page.goto(self.url, wait_until='domcontentloaded', timeout=35000)
+        if response and response.status in (401,403,418,429):
+            raise Invalid('Public page access restricted or rate limited; observation paused')
+        if self.expected_name:
+            self.page.get_by_role('heading',name=self.expected_name,exact=True).wait_for(timeout=15000)
+        tab=self.page.get_by_role('tab', name='最新操作记录', exact=True)
+        tab.click(timeout=15000)
         panel = self.page.get_by_role('tabpanel', name='最新操作记录', exact=True)
-        panel.get_by_text(STAMP).first.wait_for(timeout=15000)
+        from playwright.sync_api import TimeoutError as BrowserTimeout
+        try:
+            panel.wait_for(timeout=5000)
+        except BrowserTimeout:
+            # SSR tabs may appear before React attaches their click handlers.
+            tab.click(timeout=15000)
+            panel.wait_for(timeout=15000)
+        # The date and clock may be separate spans; match the complete panel text.
+        self.page.wait_for_function(r'(el)=>/\d{2}-\d{2},?\s+\d{2}:\d{2}:\d{2}/.test(el.innerText)',
+                                    arg=panel.element_handle(),timeout=15000)
         dates = panel.get_by_role('textbox').all()
         year = datetime.strptime(dates[-1].input_value(), '%Y-%m-%d').year if dates else datetime.now().year
         rows = parse_public(panel.inner_text(), year, self.offset)
@@ -146,6 +164,10 @@ class Runner:
         while not self.stop.wait(1):
             state=self.store.snapshot()
             for t in state['traders']:
+                monitor=json.loads(t.get('signal_monitor') or '{}')
+                if monitor.get('mode')=='observe':
+                    # A signal observer never enters the paper execution scheduler.
+                    continue
                 if t['source']=='binance_public':
                     active=t['enabled'] or any(p['trader_id']==t['id'] for p in state['positions'])
                     if active and t['id'] not in self.workers:

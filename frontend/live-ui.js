@@ -4,6 +4,19 @@ export function createAccountUI({api,toast,language}) {
   const safe=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const n=(x,d=2)=>Number(x||0).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
   let account=null,app=null,view='live';
+  let previousSignal=null;
+  const signalCard=document.createElement('section');
+  signalCard.id='signal-source-status';signalCard.className='card hidden';
+  $('#view-live').prepend(signalCard);
+  function sourceMonitor(trader){try{return JSON.parse(trader?.signal_monitor||'{}');}catch{return {};}}
+  signalCard.addEventListener('click',async event=>{
+    const button=event.target.closest('button');if(!button)return;
+    if(button.dataset.signalAction==='open')document.querySelector('.nav-item[data-view="observability"]')?.click();
+    if(button.dataset.signalAction==='toggle'){
+      const trader=app?.traders.find(t=>t.id===button.dataset.trader);
+      if(trader)try{await api(`/api/traders/${trader.id}/toggle`,{enabled:!trader.enabled});toast(text('信号追踪状态已更新','Signal observation updated'));}catch(e){toast(e.message);}
+    }
+  });
   function render(){
     if(!account)return;
     const connected=account.connected,live=account.environment==='production',readOnly=account.execution_allowed===false;
@@ -45,6 +58,18 @@ export function createAccountUI({api,toast,language}) {
   }
   function updateApp(state){
     app=state;
+    const tracked=app.traders.find(t=>sourceMonitor(t).mode==='observe');
+    signalCard.classList.toggle('hidden',!tracked);
+    if(tracked){
+      const m=sourceMonitor(tracked),alive=!!m.owner&&Date.now()/1000-m.heartbeat<180;
+      if(previousSignal?.owner===m.owner&&Number(m.new_count)>previousSignal.count){
+        toast(tracked.name+text('：发现新的公开操作，已记录，未下单。',': new public operation recorded; no order sent.'));
+      }
+      previousSignal={owner:m.owner,count:Number(m.new_count)||0};
+      const labels={starting:text('正在连接公开页面','Connecting'),running:text('真实信号追踪中','Observing public operations'),paused:text('已暂停信号追踪','Observation paused'),retrying:text('采集重试中','Retrying'),error:text('采集异常，已停止','Collection stopped with error'),stopped:text('信号追踪已停止','Observation stopped')};
+      const status=alive?(labels[m.status]||m.status):text('信号追踪已停止，需要重启采集','Observation stopped; restart the collector');
+      signalCard.innerHTML=`<div class="section-head"><div><span class="eyebrow">PUBLIC SIGNALS / OBSERVE ONLY</span><h2>${safe(tracked.name)} · ${safe(status)}</h2></div><span class="pill blue">${text('已锁定 · 不下单','LOCKED · NO ORDERS')}</span></div><p class="small muted">${text('每轮采集完成后等待 15 秒；实际发现时间还受页面加载与平台公开延迟影响。','Waits 15 seconds after each poll; page loading and platform publication add delay.')}<br>${text('历史基线','Baseline')}: ${n(m.baseline_count,0)} · ${text('新增操作','New operations')}: ${n(m.new_count,0)} · ${text('最近成功采集','Last successful poll')}: ${m.last_poll?safe(new Date(m.last_poll).toLocaleString()):'—'}</p>${m.last_error?`<p class="form-error">${safe(m.last_error)}</p>`:''}<div class="button-row"><button class="primary" data-signal-action="open">${text('查看真实信号记录','View public signals')}</button><button class="secondary" data-signal-action="toggle" data-trader="${safe(tracked.id)}" ${alive?'':'disabled'}>${tracked.enabled?text('暂停追踪','Pause'):text('恢复追踪','Resume')}</button></div>`;
+    }
     const select=$('#live-trader-select'),selected=account?.watching?account.trader_id:select.value;
     select.innerHTML='<option value="">'+text('请选择公开数据源交易员','Choose a public-source trader')+'</option>'+app.traders.filter(t=>t.source==='binance_public'&&t.authorized).map(t=>`<option value="${safe(t.id)}">${safe(t.name)}</option>`).join('');
     select.value=app.traders.some(t=>t.id===selected)?selected:'';

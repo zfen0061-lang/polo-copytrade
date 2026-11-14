@@ -277,6 +277,8 @@ class LiveManager:
         c=validate_config(raw)
         if c['utc_offset_minutes'] is None:raise Invalid('请核实源操作时区。')
         trader=self.store.get_trader(trader_id)
+        if json.loads(trader.get('signal_monitor') or '{}').get('mode')=='observe':
+            raise Invalid('This trader is locked to signal observation; configure execution separately before starting account following')
         if trader['source']!='binance_public' or not trader['authorized']:
             raise Invalid('实盘只接收已核实权限的公开数据源，不能连接演示信号。')
         if trader['enabled']:raise Invalid('请先暂停该交易员的模拟采集，避免重复采集同一来源。')

@@ -55,3 +55,24 @@ Added a visible startup notice until frontend handlers are installed and added n
 ## Read-only production launcher
 
 60 local source tests pass, including production environment selection and a server-side execution lock for read-only account sessions. The read-only guard rejects account-follow starts before scheduling any worker. Fake credentials were used in tests; no real credentials were collected by the agent.
+
+## Public Aoying signal observation
+
+The user entered production credentials locally and the account read-only connection returned an account snapshot.
+Account execution remains disabled and account following remains inactive. Credentials were not read by the agent.
+
+The actual visible Aoying portfolio (`5075281354358777856`) was opened with a clean headless browser.
+Ten public operations were parsed, covering OPEN_LONG, OPEN_SHORT and CLOSE_SHORT, with filled quantities.
+The same operation body was checked in UTC and Asia/Kuala_Lumpur browser contexts; its displayed timestamp
+shifted eight hours. Observation now explicitly uses UTC. A timestamp split across DOM elements and early
+SSR tab clicks were handled in the public collector.
+
+A separate observer was started beside the connected account server, preserving its in-memory credentials.
+At least four successful live polls retained ten unique historical baseline records, zero new observations,
+zero paper orders and zero account orders. This verifies repeated page reading and baseline de-duplication;
+the arrival of a new live operation has not yet been witnessed. New-operation, pause/resume and history-gap
+behavior are covered with synthetic collector fixtures.
+
+69 source tests pass. Browser checks confirmed the locked observer card, ten signal rows, source quantities,
+disabled account execution controls and no JavaScript errors or mutating requests. This is a source update;
+the previously published portable release has not been rebuilt with the observer.

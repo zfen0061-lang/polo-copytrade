@@ -80,3 +80,8 @@ See [API](docs/API.md), [validation](docs/VALIDATION.md) and [production work](d
 | `backend/connect.py` | Local hidden credentials and launcher |
 | `backend/server.py` | Local API and static assets |
 | `frontend/` | Bilingual account workspace and separate paper lab |
+## Public signal observer
+
+Source builds support observation-only tracking of Aoying portfolio `5075281354358777856`.
+The observer records visible public operations without paper or exchange orders. See
+[signal setup and limitations](docs/SIGNALS.md). The existing portable preview predates this source update.

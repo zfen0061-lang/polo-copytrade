@@ -93,6 +93,44 @@ function setView(next) {
 
 function empty(columns, text) { return `<tr><td class="empty" colspan="${columns}">${escapeHtml(text)}</td></tr>`; }
 
+function signalMonitor(trader) {
+  try { return JSON.parse(trader?.signal_monitor || '{}'); } catch { return {}; }
+}
+
+function renderSignalObservation(trader,events) {
+  const monitor=signalMonitor(trader);
+  if(monitor.mode==='observe') {
+    const labels={starting:t('正在连接','CONNECTING'),running:t('真实信号追踪中','OBSERVING'),paused:t('已暂停','PAUSED'),retrying:t('连接重试中','RETRYING'),error:t('采集异常','ERROR'),stopped:t('已停止','STOPPED')};
+    $('#trader-detail').innerHTML=`<div class="trader-identity"><span class="avatar">${escapeHtml(trader.name.slice(0,1))}</span><div><strong>${escapeHtml(trader.name)}</strong>${badge(t('公开信号 · 仅观察','PUBLIC · OBSERVE ONLY'),'blue')} ${badge(labels[monitor.status]||monitor.status,'subtle')}</div></div><p class="small muted">${t('已锁定此交易员。历史记录作为基线；新操作仅记录，不创建订单。','Locked to this trader. Historical baseline and new observations never create orders.')}</p>`;
+    $('#toggle-trader').textContent=trader.enabled?t('暂停信号追踪','Pause signals'):t('恢复信号追踪','Resume signals');
+    $('#toggle-trader').disabled=!monitor.owner||Date.now()/1000-monitor.heartbeat>180;
+    $('#edit-trader').disabled=true;
+  } else {
+    $('#toggle-trader').disabled=false;
+  }
+  for(const card of $('#trader-cards').children) {
+    const id=card.querySelector('.select-trader')?.dataset.id;
+    const item=state.traders.find(x=>x.id===id);
+    const m=signalMonitor(item);
+    if(m.mode==='observe') {
+      card.querySelector('.edit-card').disabled=true;
+      card.querySelector('.trader-rules').innerHTML=`<p class="small muted">${t('真实公开信号 · 仅观察，不创建订单','Real public signals · observation only')}<br>${t('历史基线','Baseline')}: ${num(m.baseline_count,0)} · ${t('新操作','New')}: ${num(m.new_count,0)}<br>${t('最近采集','Last poll')}: ${m.last_poll?fullTime(m.last_poll):'—'}</p>`;
+    }
+  }
+  Array.from($('#events-body').children).forEach((row,index)=>{
+    const event=events[index];
+    if(!event||row.children.length!==8)return;
+    if(event.source_quantity!=null) {
+      const info=document.createElement('span');info.className='cell-sub';
+      info.textContent=t('成交数量 ','Filled quantity ')+num(event.source_quantity,6)+t(' · 杠杆未公开',' · Leverage unavailable');
+      row.children[3].appendChild(info);
+    }
+    if(event.quote_price==null)row.children[5].textContent='—';
+    if(event.deviation==null)row.children[6].textContent='—';
+    if(event.status==='observed')row.children[7].querySelector('.pill').textContent=t('已观察 · 未下单','OBSERVED · NO ORDER');
+  });
+}
+
 function chart() {
   const values = state.equity.map(x => Number(x.value));
   if (!values.length) values.push(Number(state.metrics.equity),Number(state.metrics.equity));
@@ -148,6 +186,7 @@ function render() {
   $('#logs').innerHTML=state.logs.length?state.logs.map(l=>`<div class="log-row"><time>${shortTime(l.created)}</time>${badge(l.level.toUpperCase(),l.level==='error'?'red':l.level==='warning'?'blue':'subtle')}<span>${escapeHtml(l.message)}</span></div>`).join(''):`<p class="muted small">${t('暂无日志','No activity yet')}</p>`;
   $('#updated').textContent=t('更新于 ','Updated ')+shortTime(new Date().toISOString());
   chart();
+    renderSignalObservation(tr,selectedEvents);
   accountUI.updateApp(state);
 }
 

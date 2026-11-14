@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import secrets
 import signal
+import socket
 import sys
 import threading
 import webbrowser
@@ -19,6 +20,16 @@ from .live import LiveManager
 from .paths import VERSION,resource_root,default_data_dir
 
 ROOT=resource_root()
+
+
+class LocalHTTPServer(ThreadingHTTPServer):
+    # Windows SO_REUSEADDR can let two instances serve the same address.
+    allow_reuse_address=False
+
+    def server_bind(self):
+        if sys.platform=='win32':
+            self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+        super().server_bind()
 
 
 def make_handler(store,runner,port,live=None):
@@ -167,7 +178,7 @@ def main(argv=None):
     runner=Runner(store)
     live=LiveManager(store,execution_allowed=not args.read_only_account)
     try:
-        server=ThreadingHTTPServer(('127.0.0.1',args.port),make_handler(store,runner,args.port,live))
+        server=LocalHTTPServer(('127.0.0.1',args.port),make_handler(store,runner,args.port,live))
     except OSError:
         raise SystemExit('Port unavailable; choose --port 8766 or close the previous instance.')
     if not args.no_runner: runner.start()

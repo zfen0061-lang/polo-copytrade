@@ -161,6 +161,18 @@ class SignalObserver:
                 self.collector.close()
                 self.collector=None
 
+    def recover_crashed_browser(self,error):
+        # A crashed/closed browser cannot recover by retrying the same page.
+        # Preserve the observation cursor; never reset rate limits or access denials.
+        if type(error).__name__!='TargetClosedError' and 'Page crashed' not in str(error):
+            return False
+        if self.collector:
+            failed=self.collector
+            self.collector=None
+            try:failed.close()
+            except Exception:pass
+        return True
+
     def run(self):
         self.claim()
         failures=0
@@ -175,6 +187,7 @@ class SignalObserver:
                     status,error='error',str(exc)
                     break
                 except Exception as exc:
+                    self.recover_crashed_browser(exc)
                     failures+=1
                     error=type(exc).__name__+': '+str(exc).split('\n')[0][:200]
                     if failures>=5:

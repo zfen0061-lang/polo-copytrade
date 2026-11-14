@@ -52,6 +52,20 @@ class ObserverTests(unittest.TestCase):
     def test_second_observer_cannot_claim_the_same_trader(self):
         with self.assertRaises(Invalid):SignalObserver(self.store).claim()
 
+    def test_crashed_browser_is_recreated_without_replaying_history(self):
+        self.observer.poll()
+        class TargetClosedError(RuntimeError):pass
+        self.assertTrue(self.observer.recover_crashed_browser(TargetClosedError('Page crashed')))
+        self.assertTrue(self.collector.closed)
+        self.assertIsNone(self.observer.collector)
+        replacement=FakeCollector()
+        replacement.rows=[operation('after-crash'),*replacement.rows]
+        self.observer.collector_factory=lambda:replacement
+        self.assertEqual(self.observer.poll(),1)
+        self.assertEqual(self.store.snapshot()['events'][0]['status'],'observed')
+        self.assertEqual(self.store.snapshot()['orders'],[])
+        self.assertFalse(self.observer.recover_crashed_browser(Invalid('Public access restricted')))
+
     def test_restart_preserves_counts_and_rebaselines_missed_operations(self):
         self.observer.poll()
         self.observer.close()

@@ -108,3 +108,11 @@ and AC awake guard stayed running. Two successful recovery polls recorded eleven
 operations, zero new-operation executions and no orders. The operation first visible after the outage
 was treated as reconnection history, not replayed as a trade. Restart baseline-count preservation is tested.
 This recovery does not establish an uptime guarantee for the public website.
+## Crashed public-browser recovery
+
+An active observer reported `TargetClosedError: Page.goto: Page crashed` and retried an unusable page.
+The observer now closes a crashed/closed collector and creates a replacement on its next bounded retry,
+preserving its in-session known-operation cursor. Access restrictions and ordinary network timeouts do
+not trigger this browser replacement. Eight targeted observer tests pass, including simulated browser
+failure, new-record detection after replacement and no order creation. The failed observer alone was
+replaced to load the fix; the account session remained connected and read-only.

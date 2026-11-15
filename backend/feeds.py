@@ -69,9 +69,14 @@ class PublicCollector:
             self.runtime.stop()
 
     def fetch(self, known):
-        response=self.page.goto(self.url, wait_until='domcontentloaded', timeout=35000)
-        if response and response.status in (401,403,418,429):
-            raise Invalid('Public page access restricted or rate limited; observation paused')
+        portfolio=urllib.parse.urlsplit(self.url).path.rstrip('/').rsplit('/',1)[-1]
+        # The SSR heading exists before React knows the portfolio ID. Waiting
+        # only for the heading can submit portfolioId="" and display no records.
+        with self.page.expect_response(lambda r:self.matches_public_response(r,'detail',portfolio),timeout=20000) as detail:
+            response=self.page.goto(self.url, wait_until='domcontentloaded', timeout=35000)
+            if response and response.status in (401,403,418,429):
+                raise Invalid('Public page access restricted or rate limited; observation paused')
+        self.verify_operation_response(detail.value)
         if self.expected_name:
             self.page.get_by_role('heading',name=self.expected_name,exact=True).wait_for(timeout=15000)
         self.page.wait_for_load_state('load',timeout=20000)
@@ -79,15 +84,23 @@ class PublicCollector:
         # Give client hydration a bounded settling period before selecting a tab.
         self.page.wait_for_timeout(2000)
         tab=self.page.get_by_role('tab', name='最新操作记录', exact=True)
-        tab.click(timeout=15000)
-        panel = self.page.get_by_role('tabpanel', name='最新操作记录', exact=True)
         from playwright.sync_api import TimeoutError as BrowserTimeout
-        try:
-            panel.wait_for(timeout=5000)
-        except BrowserTimeout:
-            # SSR tabs may appear before React attaches their click handlers.
-            tab.click(timeout=15000)
-            panel.wait_for(timeout=15000)
+        for attempt in range(2):
+            try:
+                # A visible SSR panel may say "no records" before hydration.
+                # Require the public request triggered by the UI, not just a
+                # visible tab, before trusting its rendered operation records.
+                with self.page.expect_response(lambda r:self.matches_public_response(r,'order-history',portfolio),
+                    timeout=15000) as pending:
+                    tab.click(timeout=15000)
+                operation_response=pending.value
+                break
+            except BrowserTimeout:
+                if attempt:raise
+                self.page.wait_for_timeout(2000)
+        self.verify_operation_response(operation_response)
+        panel = self.page.get_by_role('tabpanel', name='最新操作记录', exact=True)
+        panel.wait_for(timeout=15000)
         # The date and clock may be separate spans; match the complete panel text.
         self.page.wait_for_function(r'(el)=>/\d{2}-\d{2},?\s+\d{2}:\d{2}:\d{2}/.test(el.innerText)',
                                     arg=panel.element_handle(),timeout=15000)
@@ -112,6 +125,32 @@ class PublicCollector:
                 break
             rows = parse_public(current, year, self.offset)
         return rows, bool(known)
+
+    @staticmethod
+    def matches_public_response(response,kind,portfolio):
+        parsed=urllib.parse.urlsplit(response.url)
+        if parsed.hostname!='www.binance.com' or not parsed.path.endswith('/copy-trade/lead-portfolio/'+kind):return False
+        params={k:v[0] for k,v in urllib.parse.parse_qs(parsed.query).items()}
+        try:
+            body=response.request.post_data_json
+            if isinstance(body,dict):params.update(body)
+        except (ValueError,TypeError):pass
+        return str(params.get('portfolioId',''))==portfolio
+
+    @staticmethod
+    def verify_operation_response(response):
+        if response.status in (401,403,418,429):
+            raise Invalid('Public operation access restricted or rate limited; observation paused')
+        if response.status>=500:
+            raise ConnectionError('Public operation service is temporarily unavailable')
+        if response.status!=200:
+            raise Invalid('Unexpected public operation response; observation paused')
+        payload=response.json()
+        if not isinstance(payload,dict) or payload.get('success') is not True or payload.get('code')!='000000':
+            code=str(payload.get('code','unknown')) if isinstance(payload,dict) else 'invalid_json'
+            code=re.sub(r'[^A-Za-z0-9_-]','',code)[:40]
+            message=re.sub(r'\s+',' ',str(payload.get('message') or ''))[:160] if isinstance(payload,dict) else ''
+            raise Invalid('Public operation request was not successful (public code '+code+'): '+message+'; observation paused')
 
 
 def public_quote(symbol):

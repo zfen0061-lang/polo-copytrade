@@ -54,6 +54,13 @@ export function createAccountUI({api,toast,language}) {
   const runtimeCard=document.createElement('section');
   runtimeCard.id='monitor-runtime-status';runtimeCard.className='card';
   signalCard.before(runtimeCard);
+  runtimeCard.addEventListener('click',async event=>{
+    const button=event.target.closest('[data-retry-collector]');if(!button)return;
+    button.disabled=true;
+    try{await api('/api/runtime/retry-observer',{});toast(text('正在重新检查公开采集；不会下单。','Rechecking public collection; no orders are sent.'));}
+    catch(error){toast(error.message);}
+    finally{button.disabled=false;}
+  });
   const readinessNote=document.createElement('p');readinessNote.id='execution-readiness';readinessNote.className='callout small hidden';draftCard.after(readinessNote);
   function record(raw){try{return JSON.parse(raw||'{}');}catch{return {};}}
   const riskDialog=document.createElement('dialog');
@@ -116,6 +123,9 @@ export function createAccountUI({api,toast,language}) {
     const supervised=runtime?.mode==='read_only_monitor';
     const healthy=supervised&&runtime.backend_healthy&&Date.now()-Date.parse(runtime.heartbeat)<15000;
     runtimeCard.innerHTML=`<div class="section-head"><h2>${text('后台运行状态','Background service')}</h2><span class="pill ${healthy?'green':'subtle'}">${healthy?text('守护运行中 · 只读监测','SUPERVISED · READ ONLY'):text('后台未受守护或状态过期','UNMANAGED OR STALE')}</span></div><p class="small muted">${supervised?text('后台异常退出后会自动重启；关闭网页不影响采集。','The supervisor restarts failed workers; closing this page does not stop collection.'):text('请使用 open-continuous-monitor.cmd 启动持续监测。','Use open-continuous-monitor.cmd for continuous monitoring.')}<br>${account.configured?text('账户密钥已在本次会话中；后台独立刷新账户。','Credentials are in this session; account reads run independently.'):text('账户尚未连接：双击 reconnect-readonly-account.cmd，在本机隐藏输入密钥。','Account disconnected: run reconnect-readonly-account.cmd and enter credentials locally.')}<br>${text('电脑关机、手动睡眠或断网会中断采集。系统重启后需重新输入账户密钥。当前不会自动交易。','Power off, manual sleep or lost connectivity interrupts monitoring. Re-enter account credentials after a system restart. Automatic trading is off.')}</p>${runtime?.error?`<p class="form-error">${safe(runtime.error)}</p>`:''}`;
+    if(runtime?.components?.observer?.blocked){
+      runtimeCard.insertAdjacentHTML('beforeend',`<p class="form-error">${safe(runtime.components.observer.blocked)}</p><button class="secondary" data-retry-collector>${text('重新检查采集','Recheck collector')}</button>`);
+    }
     const connected=account.connected,live=account.environment==='production',readOnly=account.execution_allowed===false;
     readinessNote.classList.toggle('hidden',!connected);
     if(connected){

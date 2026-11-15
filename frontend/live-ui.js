@@ -50,6 +50,7 @@ export function createAccountUI({api,toast,language}) {
   const draftCard=document.createElement('section');
   draftCard.id='strategy-draft-status';draftCard.className='card hidden';
   signalCard.after(draftCard);
+  const readinessNote=document.createElement('p');readinessNote.id='execution-readiness';readinessNote.className='callout small hidden';draftCard.after(readinessNote);
   function record(raw){try{return JSON.parse(raw||'{}');}catch{return {};}}
   const riskDialog=document.createElement('dialog');
   riskDialog.id='risk-preview-dialog';
@@ -57,6 +58,7 @@ export function createAccountUI({api,toast,language}) {
   document.body.appendChild(riskDialog);
   const riskForm=riskDialog.querySelector('form');
   let activeRiskRevision='';
+  let activeEquityLeverage=5;
   function riskValues(){const raw=Object.fromEntries(new FormData(riskForm));return raw;}
   function renderRiskPreview(){
     const raw=riskValues(),cap=raw.asset==='equity'?5:10;
@@ -79,7 +81,7 @@ export function createAccountUI({api,toast,language}) {
     }catch(error){output.textContent=raw.stopPercent?error.message:text('填写止损数值后查看费用前的风险估算。','Enter a stop value to preview risk before costs.');riskForm.querySelector('[type="submit"]').disabled=true;}
   }
   riskForm.addEventListener('input',renderRiskPreview);
-  riskForm.elements.asset.addEventListener('change',()=>{riskForm.elements.leverage.value=riskForm.elements.asset.value==='equity'?'5':'10';renderRiskPreview();});
+  riskForm.elements.asset.addEventListener('change',()=>{riskForm.elements.leverage.value=riskForm.elements.asset.value==='equity'?String(activeEquityLeverage):'10';renderRiskPreview();});
   riskForm.addEventListener('submit',event=>{event.preventDefault();try{const raw=riskValues();previewStopRisk(raw);localStorage.setItem('polo-risk-preview',JSON.stringify({...raw,policyRevision:activeRiskRevision}));toast(text('试算草案已保存在本浏览器，实盘配置未改变。','Preview saved in this browser. Live configuration unchanged.'));riskDialog.close();}catch(error){toast(error.message);}});
   riskDialog.addEventListener('click',event=>{if(event.target.closest('[data-risk-close]'))riskDialog.close();});
   draftCard.addEventListener('click',event=>{
@@ -88,7 +90,8 @@ export function createAccountUI({api,toast,language}) {
     const draft=record(planned?.execution_draft);
     let stored={};try{stored=record(localStorage.getItem('polo-risk-preview'));}catch{}
     const initial=draft.initial_capital_usdt||'60';
-    activeRiskRevision=draft.margin_stop_updated_at||draft.updated_at||'initial';
+    activeRiskRevision=draft.risk_policy_revision_at||draft.margin_stop_updated_at||draft.updated_at||'initial';
+    activeEquityLeverage=Number(draft.equity_leverage)||5;
     if(stored.policyRevision!==activeRiskRevision)stored={};
     const confirmed=draft.margin_stop_loss_fraction!=null?String(Number(draft.margin_stop_loss_fraction)*100):'';
     const values={capital:initial,margin:initial,asset:'crypto',leverage:'10',stopUnit:confirmed?'margin':'price',stopPercent:confirmed,riskPercent:confirmed||'2',drawdownPercent:'',...stored};
@@ -107,6 +110,14 @@ export function createAccountUI({api,toast,language}) {
   function render(){
     if(!account)return;
     const connected=account.connected,live=account.environment==='production',readOnly=account.execution_allowed===false;
+    readinessNote.classList.toggle('hidden',!connected);
+    if(connected){
+      const checks=[];
+      if(account.account?.hedge_mode)checks.push(text('双向持仓模式尚未适配','hedge mode is not yet supported'));
+      if(account.account?.multi_assets)checks.push(text('多资产模式尚未适配','multi-assets mode is not yet supported'));
+      if(account.account?.positions?.length)checks.push(text('已有仓位归属尚需核对','existing position ownership needs review'));
+      readinessNote.textContent=text('实盘尚未就绪：','Live execution is not ready: ')+(checks.length?checks.join('；')+'。 ':'')+text('当前参数为草案；复投记账、按保证金比例止损及端到端验单尚未完成。','Parameters are drafts; compounding accounting, margin-based stops and end-to-end order validation remain incomplete.');
+    }
     $('#account-environment').textContent=connected?(live?(readOnly?text('真实账户 · 只读','PRODUCTION · READ ONLY'):text('真实账户 / Production','PRODUCTION ACCOUNT')):text('交易所测试网','EXCHANGE TESTNET')):text('未连接','NOT CONNECTED');
     $('#account-environment').className='pill '+(connected?(live?'blue':'green'):'subtle');
     $('#account-empty').classList.toggle('hidden',connected);
@@ -153,7 +164,7 @@ export function createAccountUI({api,toast,language}) {
     draftCard.classList.toggle('hidden',!planned);
     if(planned){
       const draft=record(planned.execution_draft);
-      draftCard.innerHTML=`<div class="section-head"><h2>${safe(planned.name)} · ${text('跟单资金草案','Strategy capital draft')}</h2><span class="pill subtle">${text('待启用 · 未划转资金','DRAFT · NO TRANSFER')}</span></div><p>${text('初始分配','Initial allocation')}: <strong>${n(draft.initial_capital_usdt)} USDT</strong> · ${text('使用本策略可用资金滚动复投，不再每次取一半。','Compound the allocated strategy pool; do not halve it on each entry.')}</p><p class="small muted">${text('平仓：只全平对应合约、方向的本程序仓位。加密货币最高10倍，股票类最高5倍。','Close only the matching bot-owned symbol and side. Crypto cap: 10x; equity cap: 5x.')}<br>${text('待完成：累计亏损上限、股票杠杆规则、已有仓位归属及复投/止损执行验证。当前草案不会触发下单。','Pending: cumulative loss cap, equity leverage rule, existing-position ownership and verified compounding/stop execution. This draft cannot send orders.')}</p>`;
+      draftCard.innerHTML=`<div class="section-head"><h2>${safe(planned.name)} · ${text('跟单资金草案','Strategy capital draft')}</h2><span class="pill subtle">${text('待启用 · 未划转资金','DRAFT · NO TRANSFER')}</span></div><p>${text('初始分配','Initial allocation')}: <strong>${n(draft.initial_capital_usdt)} USDT</strong> · ${text('使用本策略可用资金滚动复投，不再每次取一半。','Compound the allocated strategy pool; do not halve it on each entry.')}</p><p class="small muted">${text('平仓：只全平对应合约、方向的本程序仓位。加密货币最高10倍，股票类最高5倍。','Close only the matching bot-owned symbol and side. Crypto cap: 10x; equity cap: 5x.')}<br>${text('待完成：累计亏损规则、账户模式适配、已有仓位归属及复投/止损执行验证。当前草案不会触发下单。','Pending: cumulative loss rule, account-mode compatibility, existing-position ownership and verified compounding/stop execution. This draft cannot send orders.')}</p>`;
     }
     const tracked=app.traders.find(t=>sourceMonitor(t).mode==='observe');
     if(planned){
@@ -161,9 +172,11 @@ export function createAccountUI({api,toast,language}) {
       if(policy.margin_stop_loss_fraction!=null){
         const stopNote=document.createElement('p');stopNote.id='confirmed-margin-stop';stopNote.className='small muted';
         const percentage=Number(policy.margin_stop_loss_fraction)*100;
-        stopNote.textContent=text('已记录的单笔保证金止损目标：','Recorded per-trade margin stop target: ')+n(percentage)+'% · '+text('10倍约对应价格','At 10x, approximate price distance ')+n(percentage/10)+'% · '+text('5倍约','at 5x ')+n(percentage/5)+'% · '+text('费用前换算，实际亏损不保证封顶。','before costs; actual loss is not guaranteed to be capped.');
+        const stockLeverage=Number(policy.equity_leverage)||5;
+        stopNote.textContent=text('已记录的单笔保证金止损目标：','Recorded per-trade margin stop target: ')+n(percentage)+'% · '+text('10倍约对应价格','At 10x, approximate price distance ')+n(percentage/10)+'% · '+text('股票类','equity ')+stockLeverage+text('倍约','x ')+n(percentage/stockLeverage)+'% · '+text('费用前换算，实际亏损不保证封顶。','before costs; actual loss is not guaranteed to be capped.');
         draftCard.appendChild(stopNote);
       }
+      if(policy.equity_leverage_policy==='fixed'){const equityNote=document.createElement('p');equityNote.id='confirmed-equity-leverage';equityNote.className='small muted';equityNote.textContent=text('已记录：股票类固定','Recorded: equity leverage fixed at ')+policy.equity_leverage+text('倍；仍为待启用草案。','x; remains an inactive draft.');draftCard.appendChild(equityNote);}
       const open=document.createElement('button');open.type='button';open.className='secondary';open.dataset.openRisk='true';open.textContent=text('风险设置 / 试算','Risk settings / preview');draftCard.appendChild(open);
     }
     signalCard.classList.toggle('hidden',!tracked);

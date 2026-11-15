@@ -43,3 +43,15 @@ def set_margin_stop_target(draft,fraction):
         blockers.append('verified_margin_stop_execution')
     result['blockers']=blockers
     return result
+
+
+def set_equity_leverage(draft,leverage):
+    if draft.get('status')!='draft' or draft.get('execution_enabled') is not False:
+        raise Invalid('Only an inactive strategy draft can be updated')
+    value=dec(leverage)
+    if value!=value.to_integral_value() or not 1<=value<=5:
+        raise Invalid('Equity leverage must be an integer from one to five')
+    result=dict(draft,equity_leverage_policy='fixed',equity_leverage=int(value),
+                risk_policy_revision_at=now(),updated_at=now())
+    result['blockers']=[b for b in result.get('blockers',[]) if b!='equity_leverage_policy']
+    return result

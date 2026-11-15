@@ -1,7 +1,7 @@
 import unittest
 from backend.awake import AwakeRequest,CONTINUOUS,SYSTEM_REQUIRED
 from backend.core import Invalid
-from backend.policy_draft import make_compounding_draft,preview_pool_margin,set_margin_stop_target
+from backend.policy_draft import make_compounding_draft,preview_pool_margin,set_margin_stop_target,set_equity_leverage
 
 
 class RuntimePolicyTests(unittest.TestCase):
@@ -36,6 +36,17 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertNotIn('margin_stop_loss_fraction',original)
         for value in ('0','1','-0.1','NaN'):
             with self.assertRaises(Invalid):set_margin_stop_target(original,value)
+
+    def test_fixed_equity_leverage_is_recorded_and_capped_without_starting_execution(self):
+        original=make_compounding_draft('60')
+        updated=set_equity_leverage(original,3)
+        self.assertEqual(updated['equity_leverage'],3)
+        self.assertEqual(updated['equity_leverage_policy'],'fixed')
+        self.assertNotIn('equity_leverage_policy',updated['blockers'])
+        self.assertFalse(updated['execution_enabled'])
+        self.assertIsNone(original['equity_leverage_policy'])
+        for value in (0,6,'3.5','NaN'):
+            with self.assertRaises(Invalid):set_equity_leverage(original,value)
 
     def test_sleep_guard_only_holds_on_ac_during_observation_and_releases(self):
         class Power:

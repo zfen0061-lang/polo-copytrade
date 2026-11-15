@@ -131,3 +131,10 @@ and six Node tests pass. A real browser verified the recorded 40% target, the 4%
 conversions at 10x/5x, the 24-on-60 loss estimate and a blank cumulative loss/drawdown field.
 The update does not infer a cumulative loss cap or enable order execution. User-specific runtime
 draft data stays outside the Git repository.
+## Equity leverage selection and readiness display
+
+The inactive strategy draft records fixed equity leverage separately from its hard cap. Five targeted
+runtime-policy tests pass, including validation of integer equity leverage from 1 to 5 and no execution
+activation. The preview follows the selected equity leverage instead of hardcoding 5x. A readiness note
+shows the connected account's hedge/multi-assets mode incompatibility and existing-position review need.
+These displays do not adapt the live executor, change account modes or adopt manual positions.

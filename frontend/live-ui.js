@@ -37,6 +37,7 @@ export function createAccountUI({api,toast,language}) {
   const n=(x,d=2)=>Number(x||0).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
   let account=null,app=null,view='live';
   let previousSignal=null;
+  let runtime=null;
   let accountRefreshError='';
   const accountRefresh=createAccountRefresher({
     load:()=>api('/api/live/refresh',{}),
@@ -50,6 +51,9 @@ export function createAccountUI({api,toast,language}) {
   const draftCard=document.createElement('section');
   draftCard.id='strategy-draft-status';draftCard.className='card hidden';
   signalCard.after(draftCard);
+  const runtimeCard=document.createElement('section');
+  runtimeCard.id='monitor-runtime-status';runtimeCard.className='card';
+  signalCard.before(runtimeCard);
   const readinessNote=document.createElement('p');readinessNote.id='execution-readiness';readinessNote.className='callout small hidden';draftCard.after(readinessNote);
   function record(raw){try{return JSON.parse(raw||'{}');}catch{return {};}}
   const riskDialog=document.createElement('dialog');
@@ -109,6 +113,9 @@ export function createAccountUI({api,toast,language}) {
   });
   function render(){
     if(!account)return;
+    const supervised=runtime?.mode==='read_only_monitor';
+    const healthy=supervised&&runtime.backend_healthy&&Date.now()-Date.parse(runtime.heartbeat)<15000;
+    runtimeCard.innerHTML=`<div class="section-head"><h2>${text('后台运行状态','Background service')}</h2><span class="pill ${healthy?'green':'subtle'}">${healthy?text('守护运行中 · 只读监测','SUPERVISED · READ ONLY'):text('后台未受守护或状态过期','UNMANAGED OR STALE')}</span></div><p class="small muted">${supervised?text('后台异常退出后会自动重启；关闭网页不影响采集。','The supervisor restarts failed workers; closing this page does not stop collection.'):text('请使用 open-continuous-monitor.cmd 启动持续监测。','Use open-continuous-monitor.cmd for continuous monitoring.')}<br>${account.configured?text('账户密钥已在本次会话中；后台独立刷新账户。','Credentials are in this session; account reads run independently.'):text('账户尚未连接：双击 reconnect-readonly-account.cmd，在本机隐藏输入密钥。','Account disconnected: run reconnect-readonly-account.cmd and enter credentials locally.')}<br>${text('电脑关机、手动睡眠或断网会中断采集。系统重启后需重新输入账户密钥。当前不会自动交易。','Power off, manual sleep or lost connectivity interrupts monitoring. Re-enter account credentials after a system restart. Automatic trading is off.')}</p>${runtime?.error?`<p class="form-error">${safe(runtime.error)}</p>`:''}`;
     const connected=account.connected,live=account.environment==='production',readOnly=account.execution_allowed===false;
     readinessNote.classList.toggle('hidden',!connected);
     if(connected){
@@ -136,7 +143,7 @@ export function createAccountUI({api,toast,language}) {
     $('#live-parameters').textContent=c?text('本次会话：','Session: ')+`${c.budget} USDT · ${c.order_margin} USDT/entry · ${c.leverage}× · ${n(Number(c.max_deviation)*100)}% max deviation · ${n(Number(c.stop_loss_pct)*100)}% price stop`:'';
     const a=account.account;
     $('#real-metrics').innerHTML=a?[[text('钱包余额','Wallet balance'),a.wallet_balance],[text('账户权益','Account equity'),a.equity],[text('可用余额','Available'),a.available],[text('未实现盈亏','Unrealized P&L'),a.unrealized]].map(([label,value])=>`<div class="metric"><div class="metric-top">${safe(label)}</div><div class="metric-value">${n(value)}<small>USDT</small></div></div>`).join(''):'';
-    $('#account-updated').textContent=a?text('账户最近成功更新：','Last successful account update: ')+new Date(a.updated).toLocaleString()+(accountRefresh.busy?text(' · 正在读取币安账户…',' · Reading Binance account…'):accountRefreshError?text(' · 刷新异常，稍后自动重试',' · Refresh failed; automatic retry pending'):account.watching?text(' · 跟随运行期间由后台更新',' · Updated by the following worker'):text(' · 页面打开时约每 10 秒自动刷新',' · Automatically refreshed about every 10 seconds while this page is open')):'';
+    $('#account-updated').textContent=a?text('账户最近成功更新：','Last successful account update: ')+new Date(a.updated).toLocaleString()+(accountRefresh.busy?text(' · 正在读取币安账户…',' · Reading Binance account…'):accountRefreshError?text(' · 刷新异常，稍后自动重试',' · Refresh failed; automatic retry pending'):account.account_polling?text(' · 后台约每 10 秒自动读取，无需保持网页打开',' · Background reads about every 10 seconds; page may close'):account.watching?text(' · 跟随运行期间由后台更新',' · Updated by the following worker'):text(' · 页面打开时约每 10 秒自动刷新',' · Automatically refreshed about every 10 seconds while this page is open')):'';
     $('#actual-positions').innerHTML=a?.positions?.length?a.positions.map(p=>`<tr><td><strong>${safe(p.symbol)}</strong> ${Number(p.positionAmt)>0?text('多','LONG'):text('空','SHORT')}</td><td>${n(Math.abs(Number(p.positionAmt)),6)}</td><td>${n(p.entryPrice,4)}</td><td>${n(p.markPrice,4)}</td><td class="${Number(p.unRealizedProfit)>=0?'positive':'negative'}">${n(p.unRealizedProfit)}</td><td>${n(p.liquidationPrice,4)}</td></tr>`).join(''):`<tr><td class="empty" colspan="6">${connected?text('账户当前没有仓位。','No open positions on the connected account.'):text('连接账户后显示实际仓位。','Connect to display actual account positions.')}</td></tr>`;
     $('#actual-orders').innerHTML=account.orders?.length?account.orders.map(j=>`<tr><td>${safe(j.id.slice(0,12))}</td><td>${safe(j.order?.symbol||'—')} ${safe(j.order?.side||'')}</td><td>${safe(j.order?.type||'—')}</td><td>${j.result?.executedQty?n(j.result.executedQty,6):'—'}</td><td>${j.result?.avgPrice?n(j.result.avgPrice,4):'—'}</td><td>${safe(j.state)}<span class="cell-sub">${safe(j.reason||j.result?.status||'')}</span></td></tr>`).join(''):`<tr><td class="empty" colspan="6">${text('没有账户执行记录；模拟订单在模拟实验室。','No account execution records. Paper orders are in the paper lab.')}</td></tr>`;
     if(view==='live'){
@@ -155,7 +162,8 @@ export function createAccountUI({api,toast,language}) {
     try{
       account=await api('/api/live/state');render();
       // Keep source-log rendering responsive while account reads are in flight.
-      if(account.connected&&!account.watching)void accountRefresh.request();
+      if(account.connected&&!account.watching&&!account.account_polling)void accountRefresh.request();
+      try{runtime=await api('/api/runtime/state');render();}catch{runtime=null;render();}
     }catch(e){$('#account-error').textContent=e.message;}
   }
   function updateApp(state){

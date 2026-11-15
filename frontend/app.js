@@ -50,13 +50,13 @@ function toast(message) {
 }
 
 async function session() {
-  const response = await fetch('/api/session');
+  const response = await localFetch('/api/session');
   if (!response.ok) throw new Error(t('本地服务未连接','Local service unavailable'));
   csrf = (await response.json()).csrf_token;
 }
 
 async function api(path, payload, retry=true) {
-  const response = await fetch(path, payload === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(payload)});
+  const response = await localFetch(path, payload === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(payload)});
   if (response.status === 403 && payload !== undefined && retry) {
     await session();
     return api(path,payload,false);
@@ -64,6 +64,19 @@ async function api(path, payload, retry=true) {
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Request failed');
   return result;
+}
+
+async function localFetch(path, options={}) {
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),options.method==='POST'?30000:10000);
+  try {
+    const response=await fetch(path,{...options,signal:controller.signal});
+    // Read the body within the timeout, too; a connected socket can still stall.
+    const body=await response.arrayBuffer();
+    return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
+  } catch(error) {
+    throw new Error(error.name==='AbortError'?t('本机后台响应超时，正在重连。','Local backend timed out; reconnecting.'):t('无法连接本机后台，请打开持续监测启动器。','Cannot reach local backend. Open the continuous monitor launcher.'));
+  } finally {clearTimeout(timer);}
 }
 
 function setLanguage() {

@@ -22,6 +22,10 @@ AOYING_URL='https://www.binance.com/zh-CN/copy-trading/lead-details/507528135435
 AOYING_NAME='熬鹰资本'
 
 
+class DashboardUnavailable(Invalid):
+    """Transient local-backend failure; source access/format errors stay blocked."""
+
+
 class DashboardGuard:
     def __init__(self,base):
         if base!='http://127.0.0.1:8765':
@@ -39,7 +43,7 @@ class DashboardGuard:
             state=self.get('/api/live/state')
             token=self.get('/api/session')['csrf_token']
         except Exception:
-            raise Invalid('The local read-only dashboard is unavailable; observation stopped') from None
+            raise DashboardUnavailable('The local read-only dashboard is unavailable; observation stopped') from None
         if state.get('execution_allowed') is not False or state.get('watching'):
             raise Invalid('Signal observation requires an idle read-only account server')
         if self.token is not None and token!=self.token:
@@ -84,6 +88,8 @@ class SignalObserver:
                            portfolio_id='5075281354358777856',interval_seconds=15)
             db.execute('UPDATE traders SET signal_monitor=?,enabled=1 WHERE id=?',
                        (json.dumps(self.meta),self.trader_id))
+            if old.get('status')=='paused':
+                db.execute('UPDATE traders SET enabled=0 WHERE id=?',(self.trader_id,))
             self.store.log(db,self.trader_id,'info','熬鹰资本真实信号追踪已启动；仅观察，不创建模拟或实盘订单。首次读取只建立历史基线。')
 
     def update(self,**fields):
@@ -184,13 +190,15 @@ class SignalObserver:
                     failures=0
                     self.stop.wait(15 if self.trader()['enabled'] else 1)
                 except Invalid as exc:
+                    self.meta['restartable']=isinstance(exc,DashboardUnavailable)
                     status,error='error',str(exc)
                     break
                 except Exception as exc:
-                    self.recover_crashed_browser(exc)
+                    crashed=self.recover_crashed_browser(exc)
                     failures+=1
                     error=type(exc).__name__+': '+str(exc).split('\n')[0][:200]
                     if failures>=5:
+                        self.meta['restartable']=crashed or type(exc).__name__ in ('TimeoutError','URLError','ConnectionError')
                         status='error'
                         break
                     delay=min(300,30*2**(failures-1))

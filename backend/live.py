@@ -230,6 +230,8 @@ class LiveManager:
         self.stop_event=threading.Event()
         self.thread=None
         self.lock=threading.RLock()
+        self.account_io_lock=threading.RLock()
+        self.account_polling=False
         self.order_db_path=None
         self.active_config=None
 
@@ -246,10 +248,14 @@ class LiveManager:
                         connected=self.client is not None,environment=getattr(self.client,'environment',os.environ.get('POLO_BINANCE_ENV','production')),
                         account=self.account_cache,error=self.error,watching=self.watching,entries_enabled=self.entries_enabled,
                         trader_id=self.trader_id,orders=orders,active_config=self.active_config,online_verified=False,
-                        execution_allowed=self.execution_allowed,
+                        execution_allowed=self.execution_allowed,account_polling=self.account_polling,
                         note='账户快照来自实际API；自动执行代码尚未完成本环境的在线联调。')
 
     def connect(self):
+        with self.account_io_lock:
+            return self._connect_account()
+
+    def _connect_account(self):
         with self.lock:
             if self.watching:raise Invalid('请先停止跟随再重新连接。')
         try:
@@ -264,9 +270,16 @@ class LiveManager:
         return self.status()
 
     def refresh_account(self):
-        if not self.client:raise Invalid('请先连接账户。')
-        account=self.client.account()
-        with self.lock:self.account_cache=account
+        with self.account_io_lock:
+            if not self.client:raise Invalid('请先连接账户。')
+            client=self.client
+            try:
+                client.sync()
+                account=client.account()
+            except Exception as error:
+                with self.lock:self.error=str(error) if isinstance(error,(Halt,APIError)) else '账户读取失败；保留上次成功快照，稍后重试。'
+                raise
+            with self.lock:self.account_cache,self.error=account,''
         return self.status()
 
     def start(self,trader_id,raw,background=True):
@@ -413,3 +426,29 @@ class LiveManager:
     def shutdown(self):
         self.stop()
         if self.thread:self.thread.join(timeout=3)
+
+
+class ReadOnlyAccountPoller:
+    def __init__(self,manager,interval=10):
+        if manager.execution_allowed:raise Invalid('Automatic account polling requires the read-only server')
+        self.manager,self.interval=manager,interval
+        self.stop_event=threading.Event()
+        self.thread=threading.Thread(target=self.run,daemon=True,name='read-only-account-poller')
+    def tick(self):
+        if not self.manager.status()['configured']:return False
+        if self.manager.client is None:self.manager.connect()
+        else:self.manager.refresh_account()
+        return True
+    def run(self):
+        failures=0
+        while not self.stop_event.is_set():
+            try:self.tick();failures=0
+            except Exception:failures+=1
+            self.stop_event.wait(min(60,self.interval*2**min(failures,3)))
+    def start(self):
+        self.manager.account_polling=True
+        self.thread.start()
+    def close(self):
+        self.stop_event.set()
+        self.manager.account_polling=False
+        if self.thread.is_alive():self.thread.join(timeout=3)

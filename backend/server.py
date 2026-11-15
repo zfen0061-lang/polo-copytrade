@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 from .core import Invalid,Store
 from .feeds import Runner
-from .live import LiveManager
+from .live import LiveManager,ReadOnlyAccountPoller
 from .paths import VERSION,resource_root,default_data_dir
 
 ROOT=resource_root()
@@ -70,6 +70,11 @@ def make_handler(store,runner,port,live=None):
                 self.send(200,store.snapshot())
             elif route=='/api/live/state':
                 self.send(200,live.status())
+            elif route=='/api/runtime/state':
+                path=store.path.parent/'supervisor-status.json'
+                try:runtime=json.loads(path.read_text(encoding='utf8'))
+                except (OSError,ValueError):runtime={'mode':'unmanaged','auto_trading':False}
+                self.send(200,runtime)
             elif route=='/api/config/export':
                 self.send(200,store.export_config())
             elif route=='/api/events.csv':
@@ -125,6 +130,9 @@ def make_handler(store,runner,port,live=None):
                     result=live.pause(payload['paused'])
                 elif route=='/api/live/stop':
                     result=live.stop()
+                elif route=='/api/runtime/retry-observer':
+                    from .supervisor import control_request
+                    result=control_request(store.path,{'command':'retry_observer'})
                 elif len(parts)==4 and parts[:2]==['api','traders']:
                     trader_id,action=parts[2:]
                     if action=='config':
@@ -171,8 +179,10 @@ def main(argv=None):
     parser.add_argument('--data',type=Path,default=default_data_dir()/'studio.sqlite3')
     parser.add_argument('--open-browser',action='store_true',help='Open the system browser after binding successfully')
     parser.add_argument('--read-only-account',action='store_true',help='Allow account reads but reject every account-follow start')
+    parser.add_argument('--auto-connect-readonly',action='store_true',help='Reconnect and refresh read-only account snapshots in the backend')
     parser.add_argument('--no-runner',action='store_true',help='API verification without scheduled signal processing')
     args=parser.parse_args(argv)
+    if args.auto_connect_readonly and not args.read_only_account:parser.error('Auto connection is available only in read-only mode')
     if not 1024<=args.port<=65535: parser.error('Choose a port between 1024 and 65535')
     store=Store(args.data)
     runner=Runner(store)
@@ -182,6 +192,8 @@ def main(argv=None):
     except OSError:
         raise SystemExit('Port unavailable; choose --port 8766 or close the previous instance.')
     if not args.no_runner: runner.start()
+    poller=ReadOnlyAccountPoller(live) if args.auto_connect_readonly else None
+    if poller:poller.start()
     print(f'Polo CopyTrade: http://127.0.0.1:{args.port}',flush=True)
     print('Account execution is OFF at startup. The paper lab is separate. Press Ctrl+C to stop.',flush=True)
     if args.open_browser:
@@ -191,6 +203,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
+        if poller:poller.close()
         if not args.no_runner: runner.shutdown()
         live.shutdown()
         server.server_close()

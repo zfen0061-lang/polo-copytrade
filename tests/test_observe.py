@@ -52,6 +52,18 @@ class ObserverTests(unittest.TestCase):
     def test_second_observer_cannot_claim_the_same_trader(self):
         with self.assertRaises(Invalid):SignalObserver(self.store).claim()
 
+    def test_rebuilt_paused_observer_does_not_resume_collection(self):
+        self.observer.close()
+        with self.store.db() as db:
+            db.execute('UPDATE traders SET signal_monitor=? WHERE id=?',(json.dumps(dict(status='paused')),'aoying'))
+        restarted=SignalObserver(self.store,collector_factory=lambda:self.collector)
+        try:
+            restarted.claim()
+            self.assertFalse(self.store.get_trader('aoying')['enabled'])
+            self.assertEqual(restarted.poll(),0)
+            self.assertEqual(self.store.snapshot()['events'],[])
+        finally:restarted.close()
+
     def test_crashed_browser_is_recreated_without_replaying_history(self):
         self.observer.poll()
         class TargetClosedError(RuntimeError):pass

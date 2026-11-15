@@ -1,5 +1,7 @@
 # Polo CopyTrade · v0.3.0
 
+Source update: [continuous read-only monitoring](docs/CONTINUOUS_MONITOR.md) adds a Windows login task, worker recovery and browser-independent account reads. The old v0.3.0-preview binary does not include it. The V2 execution module is testnet-only and is not integrated into the dashboard yet.
+
 [中文](README.zh-CN.md) · English
 
 A local full-stack app for observing public Binance lead-trader operations, configuring follow rules, and explicitly connecting a USDT perpetual futures account. The navy, white and teal **P** identifies Polo without implying market direction.

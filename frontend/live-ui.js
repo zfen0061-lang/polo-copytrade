@@ -55,9 +55,21 @@ export function createAccountUI({api,toast,language}) {
   runtimeCard.id='monitor-runtime-status';runtimeCard.className='card';
   signalCard.before(runtimeCard);
   runtimeCard.addEventListener('click',async event=>{
-    const button=event.target.closest('[data-retry-collector]');if(!button)return;
+    const button=event.target.closest('[data-retry-collector],[data-runtime-action]');if(!button)return;
     button.disabled=true;
-    try{await api('/api/runtime/retry-observer',{});toast(text('正在重新检查公开采集；不会下单。','Rechecking public collection; no orders are sent.'));}
+    const operation=button.dataset.runtimeAction||'retry-observer';
+    if(!['retry-observer','remember-account','forget-account','stop'].includes(operation))return;
+    try{
+      await api('/api/runtime/'+operation,{});
+      const messages={
+        'retry-observer':['正在重新检查公开采集；不会下单。','Rechecking public collection; no orders are sent.'],
+        'remember-account':['当前连接已由 Windows 加密保存，重启后可自动重连。','Connection encrypted by Windows for automatic reconnection.'],
+        'forget-account':['已删除保存的连接；本次连接继续，重启后需本机输入。','Saved connection removed. This session continues; reconnect locally after restart.'],
+        'stop':['后台正在停止；下次可用持续监测入口重新打开。','Stopping the background monitor. Use the continuous launcher to start it again.'],
+      };
+      toast(text(...messages[operation]));
+      if(operation!=='stop')await refresh();
+    }
     catch(error){toast(error.message);}
     finally{button.disabled=false;}
   });
@@ -122,10 +134,16 @@ export function createAccountUI({api,toast,language}) {
     if(!account)return;
     const supervised=runtime?.mode==='read_only_monitor';
     const healthy=supervised&&runtime.backend_healthy&&Date.now()-Date.parse(runtime.heartbeat)<15000;
-    runtimeCard.innerHTML=`<div class="section-head"><h2>${text('后台运行状态','Background service')}</h2><span class="pill ${healthy?'green':'subtle'}">${healthy?text('守护运行中 · 只读监测','SUPERVISED · READ ONLY'):text('后台未受守护或状态过期','UNMANAGED OR STALE')}</span></div><p class="small muted">${supervised?text('后台异常退出后会自动重启；关闭网页不影响采集。','The supervisor restarts failed workers; closing this page does not stop collection.'):text('请使用 open-continuous-monitor.cmd 启动持续监测。','Use open-continuous-monitor.cmd for continuous monitoring.')}<br>${account.configured?text('账户密钥已在本次会话中；后台独立刷新账户。','Credentials are in this session; account reads run independently.'):text('账户尚未连接：双击 reconnect-readonly-account.cmd，在本机隐藏输入密钥。','Account disconnected: run reconnect-readonly-account.cmd and enter credentials locally.')}<br>${text('电脑关机、手动睡眠或断网会中断采集。系统重启后需重新输入账户密钥。当前不会自动交易。','Power off, manual sleep or lost connectivity interrupts monitoring. Re-enter account credentials after a system restart. Automatic trading is off.')}</p>${runtime?.error?`<p class="form-error">${safe(runtime.error)}</p>`:''}`;
+    const remembered=runtime?.saved_connection===true;
+    const recoveryNote=remembered?text('连接已由 Windows 当前用户加密保存，后台重启或登录后可自动重连。','Connection encrypted for this Windows user; reconnects after worker restart or login.'):text('连接暂存本次会话；可点“记住当前连接”启用加密恢复。','Connection is in session memory; choose Remember connection for encrypted recovery.');
+    runtimeCard.innerHTML=`<div class="section-head"><h2>${text('后台运行状态','Background service')}</h2><span class="pill ${healthy?'green':'subtle'}">${healthy?text('守护运行中 · 只读监测','SUPERVISED · READ ONLY'):text('后台未受守护或状态过期','UNMANAGED OR STALE')}</span></div><p class="small muted">${supervised?text('后台异常退出后会自动重启；关闭网页不影响采集。','The supervisor restarts failed workers; closing this page does not stop collection.'):text('请使用 open-continuous-monitor.cmd 启动持续监测。','Use open-continuous-monitor.cmd for continuous monitoring.')}<br>${account.configured?text('账户密钥已在本次会话中；后台独立刷新账户。','Credentials are in this session; account reads run independently.'):text('账户尚未连接：双击 reconnect-readonly-account.cmd，在本机隐藏输入密钥。','Account disconnected: run reconnect-readonly-account.cmd and enter credentials locally.')}<br>${recoveryNote}<br>${text('允许息屏；接电且后台运行时防自动睡眠。关机、手动睡眠、合盖和断网仍会中断。当前不会自动交易。','Display may turn off. AC power and a running monitor prevent idle sleep. Power off, manual sleep, lid close and lost connectivity interrupt monitoring. Automatic trading is off.')}</p>${runtime?.error?`<p class="form-error">${safe(runtime.error)}</p>`:''}`;
     if(runtime?.components?.observer?.blocked){
       runtimeCard.insertAdjacentHTML('beforeend',`<p class="form-error">${safe(runtime.components.observer.blocked)}</p><button class="secondary" data-retry-collector>${text('重新检查采集','Recheck collector')}</button>`);
     }
+    const actions=document.createElement('div');actions.className='button-row';
+    actions.innerHTML=`<span class="pill ${remembered?'green':'subtle'}">${remembered?text('Windows 加密保存','WINDOWS ENCRYPTED'):text('仅本次会话','SESSION ONLY')}</span>${account.connected&&!remembered?`<button class="secondary" data-runtime-action="remember-account">${text('记住当前连接','Remember connection')}</button>`:''}${remembered?`<button class="ghost" data-runtime-action="forget-account">${text('不再记住连接','Forget saved connection')}</button>`:''}${supervised?`<button class="ghost danger" data-runtime-action="stop">${text('停止后台','Stop background monitor')}</button>`:''}`;
+    runtimeCard.appendChild(actions);
+    if(runtime?.credential_error){const warning=document.createElement('p');warning.className='form-error';warning.textContent=runtime.credential_error;runtimeCard.appendChild(warning);}
     const connected=account.connected,live=account.environment==='production',readOnly=account.execution_allowed===false;
     readinessNote.classList.toggle('hidden',!connected);
     if(connected){

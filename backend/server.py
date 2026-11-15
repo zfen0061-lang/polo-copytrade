@@ -74,6 +74,9 @@ def make_handler(store,runner,port,live=None):
                 path=store.path.parent/'supervisor-status.json'
                 try:runtime=json.loads(path.read_text(encoding='utf8'))
                 except (OSError,ValueError):runtime={'mode':'unmanaged','auto_trading':False}
+                from .credential_store import CredentialVault
+                runtime['saved_connection']=CredentialVault(store.path).exists()
+                runtime['credential_storage']='windows_dpapi_user' if runtime['saved_connection'] else 'memory_only'
                 self.send(200,runtime)
             elif route=='/api/config/export':
                 self.send(200,store.export_config())
@@ -133,6 +136,17 @@ def make_handler(store,runner,port,live=None):
                 elif route=='/api/runtime/retry-observer':
                     from .supervisor import control_request
                     result=control_request(store.path,{'command':'retry_observer'})
+                elif route=='/api/runtime/remember-account':
+                    if payload:raise Invalid('No credentials or other values are accepted through HTTP')
+                    result=live.remember_connection()
+                elif route=='/api/runtime/forget-account':
+                    if payload:raise Invalid('Expected an empty request')
+                    from .credential_store import CredentialVault
+                    CredentialVault(store.path).forget();result={'saved':False,'current_session_unchanged':True}
+                elif route=='/api/runtime/stop':
+                    if payload:raise Invalid('Expected an empty request')
+                    from .supervisor import control_request
+                    result=control_request(store.path,{'command':'stop'})
                 elif len(parts)==4 and parts[:2]==['api','traders']:
                     trader_id,action=parts[2:]
                     if action=='config':

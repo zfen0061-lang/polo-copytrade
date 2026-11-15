@@ -255,6 +255,16 @@ class LiveManager:
         with self.account_io_lock:
             return self._connect_account()
 
+    def remember_connection(self):
+        if self.execution_allowed:raise Invalid('Encrypted remembering is available only for the read-only account session')
+        with self.account_io_lock:
+            if not self.client or self.error:raise Invalid('Verify the current account connection first')
+            if self.client.environment!='production' or self.client.base!='https://fapi.binance.com':
+                raise Invalid('Only the read-only production connection can be remembered here')
+            from .credential_store import CredentialVault
+            CredentialVault(self.store.path).save(self.client.key,self.client.secret)
+        return dict(saved=True,storage='windows_dpapi_user')
+
     def _connect_account(self):
         with self.lock:
             if self.watching:raise Invalid('请先停止跟随再重新连接。')

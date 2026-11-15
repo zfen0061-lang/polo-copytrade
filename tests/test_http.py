@@ -74,6 +74,23 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/live-ui.js')[0],200)
         self.assertEqual(self.request('/polo-logo.png')[0],200)
 
+    def test_remembering_rejects_browser_credentials_and_requires_a_session_token(self):
+        route='/api/runtime/remember-account'
+        self.assertEqual(self.request(route,{})[0],403)
+        self.assertEqual(self.request(route,{'key':'fake','secret':'never-browser'},self.token)[0],400)
+        self.assertEqual(self.request(route,{},self.token)[0],400)
+        runtime=self.request('/api/runtime/state')[1]
+        self.assertFalse(runtime['saved_connection'])
+
+    def test_forgetting_saved_connection_does_not_start_or_disconnect_an_account(self):
+        from backend.credential_store import CredentialVault
+        vault=CredentialVault(self.store.path);vault.path.write_bytes(b'test-only-encrypted-placeholder')
+        self.assertTrue(self.request('/api/runtime/state')[1]['saved_connection'])
+        self.assertEqual(self.request('/api/runtime/forget-account',{},self.token)[0],200)
+        self.assertFalse(vault.exists())
+        live=self.request('/api/live/state')[1]
+        self.assertFalse(live['watching']);self.assertFalse(live['connected'])
+
     def test_create_toggle_demo_and_export(self):
         payload=dict(name='Integration test',url='https://www.binance.com/copy-trading/lead-details/5075281354358777857',source='demo')
         status,trader=self.request('/api/traders',payload,self.token)

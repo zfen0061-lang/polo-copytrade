@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime,timezone
 
 from .core import Store,Invalid,now
 from .observe import DashboardGuard
@@ -59,7 +60,17 @@ class AwakeRequest:
             self.active=False
 
 
-def run_guard(store,trader_id='aoying',stop=None):
+def supervisor_is_active(data,clock=None):
+    from .supervisor import process_alive
+    try:
+        value=json.loads((Path(data).parent/'supervisor-status.json').read_text(encoding='utf8'))
+        age=(clock or datetime.now(timezone.utc)).timestamp()-datetime.fromisoformat(value['heartbeat']).timestamp()
+        return (value.get('mode')=='read_only_monitor' and value.get('auto_trading') is False
+                and 0<=age<30 and process_alive(value.get('supervisor_pid')))
+    except (OSError,ValueError,KeyError,TypeError):return False
+
+
+def run_guard(store,trader_id='aoying',stop=None,supervised=False):
     stop=stop or threading.Event()
     dashboard=DashboardGuard('http://127.0.0.1:8765')
     dashboard()
@@ -80,14 +91,17 @@ def run_guard(store,trader_id='aoying',stop=None):
             dashboard()
             trader=store.get_trader(trader_id)
             monitor=json.loads(trader.get('signal_monitor') or '{}')
-            if not monitor.get('owner') or time.time()-monitor.get('heartbeat',0)>180:
-                break
+            if supervised:
+                observing=supervisor_is_active(store.path)
+                if not observing:break
+            else:
+                if not monitor.get('owner') or time.time()-monitor.get('heartbeat',0)>180:break
+                observing=trader['enabled'] and monitor.get('status') in ('starting','running','retrying')
             on_ac=request.power.on_ac()
-            observing=trader['enabled'] and monitor.get('status') in ('starting','running','retrying')
             active=request.update(on_ac,observing)
             meta.update(status='active' if active else 'waiting_for_ac' if not on_ac else 'paused',
                         on_ac=on_ac,heartbeat=time.time(),updated_at=now(),display_can_turn_off=True,
-                        prevents_restart=False)
+                        prevents_restart=False,scope='supervisor' if supervised else 'observer')
             with store.db() as db:
                 current=json.loads(db.execute('SELECT runtime_guard FROM traders WHERE id=?',(trader_id,)).fetchone()[0] or '{}')
                 if current.get('owner')!=owner:raise Invalid('Idle-sleep guard ownership changed')
@@ -108,8 +122,9 @@ def run_guard(store,trader_id='aoying',stop=None):
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Keep Windows awake on AC while the signal observer runs')
     parser.add_argument('--data',type=Path,default=default_data_dir()/'studio.sqlite3')
+    parser.add_argument('--supervised',action='store_true',help='Stay awake on AC while the read-only supervisor remains active')
     args=parser.parse_args(argv)
-    run_guard(Store(args.data))
+    run_guard(Store(args.data),supervised=args.supervised)
 
 
 if __name__=='__main__':main()

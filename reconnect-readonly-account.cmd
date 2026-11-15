@@ -2,8 +2,8 @@
 title Polo CopyTrade - local read-only account connection
 cd /d "%~dp0"
 if exist .venv\Scripts\python.exe (
-  .venv\Scripts\python.exe -m backend.supervisor --connect-account
+  .venv\Scripts\python.exe -m backend.supervisor --connect-account --remember
 ) else (
-  python -m backend.supervisor --connect-account
+  python -m backend.supervisor --connect-account --remember
 )
 pause

@@ -13,6 +13,6 @@ $action=New-ScheduledTaskAction -Execute $taskPython -Argument ('-m backend.supe
 $trigger=New-ScheduledTaskTrigger -AtLogOn -User $taskUser
 $principal=New-ScheduledTaskPrincipal -UserId $taskUser -LogonType Interactive -RunLevel Limited
 $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Read-only public-signal monitor. No automatic trading; account keys are memory-only.' -Force | Out-Null
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Read-only signal monitor. Optional Windows user-encrypted connection recovery. No automatic trading.' -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 Write-Output 'Read-only monitor login task installed and started. No trading is enabled.'

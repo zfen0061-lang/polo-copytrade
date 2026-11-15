@@ -51,6 +51,9 @@ def control_address(data):
 
 def control_request(data,payload):
     data=Path(data)
+    if payload.get('command')=='retry_observer':
+        from .credential_store import migrate_pending_session
+        migrate_pending_session(data)
     address,family=control_address(data)
     token=(data.parent/'supervisor-control.token').read_bytes()
     with multiprocessing.connection.Client(address,family=family,authkey=token) as connection:
@@ -75,13 +78,17 @@ class MonitorSupervisor:
         self.listener=None;self.ready=False;self.server_session=None
         self.health_failures=0;self.server_started=0
         self.started_at=now();self.error=''
+        from .credential_store import CredentialVault
+        self.vault=CredentialVault(self.data);self.credential_error=''
+        try:self.credentials=self.vault.load()
+        except Invalid as exc:self.credential_error=str(exc)
         self.token_path=self.data.parent/'supervisor-control.token'
         self.status_path=self.data.parent/'supervisor-status.json'
         self.children={
             'server':Child('server',['-m','backend.server','--read-only-account','--auto-connect-readonly',
                 '--no-runner','--port',str(port),'--data',str(self.data)]),
             'observer':Child('observer',['-m','backend.observe','--data',str(self.data)]),
-            'awake':Child('awake',['-m','backend.awake','--data',str(self.data)]),
+            'awake':Child('awake',['-m','backend.awake','--supervised','--data',str(self.data)]),
         }
         previous=json.loads(self.store.get_trader('aoying').get('signal_monitor') or '{}')
         if previous.get('status')=='error' and not previous.get('restartable'):
@@ -134,7 +141,9 @@ class MonitorSupervisor:
     def snapshot(self):
         return dict(mode='read_only_monitor',supervisor_pid=os.getpid(),started_at=self.started_at,
             heartbeat=now(),backend_healthy=self.ready,account_credentials_in_memory=self.credentials is not None,
-            credential_storage='memory_only',auto_trading=False,error=self.error,
+            credential_storage='windows_dpapi_user' if self.vault.exists() else 'memory_only',
+            saved_connection=self.vault.exists(),credential_error=self.credential_error,
+            auto_trading=False,error=self.error,
             components={name:dict(pid=child.process.pid if child.process and child.process.poll() is None else None,
                 restarts=child.restarts,blocked=child.blocked) for name,child in self.children.items()})
 
@@ -180,6 +189,7 @@ class MonitorSupervisor:
             message=self.commands.get_nowait();name=message['command']
             if name=='credentials':
                 self.credentials=(message['key'],message['secret'])
+                self.credential_error=''
                 for child in reversed(list(self.children.values())):self.terminate(child)
                 for child in self.children.values():
                     child.next_start=0
@@ -225,7 +235,7 @@ class MonitorSupervisor:
                                 if name=='observer':
                                     last=json.loads(self.store.get_trader('aoying')['signal_monitor'] or '{}')
                                     if last.get('status')=='error' and not last.get('restartable',False):child.blocked=last.get('last_error') or 'Review collector failure'
-                            can_start=eligible and not child.blocked and (name=='observer' or bool(monitor.get('owner')))
+                            can_start=eligible and not child.blocked
                             if can_start and child.process is None and clock>=child.next_start:
                                 if self.clear_dead_lease(column):self.launch(child)
                     self.save_status();self.stop.wait(3)
@@ -237,30 +247,42 @@ class MonitorSupervisor:
                 self.error='Supervisor stopped';self.save_status()
 
 
-def enter_credentials(data):
+def enter_credentials(data,remember=False):
+    from .credential_store import CredentialVault
+    if not remember and CredentialVault(data).exists():
+        raise Invalid('A saved connection exists. Use --remember to replace it, or explicitly forget the saved connection first')
     if os.name=='nt':
         import ctypes
         ctypes.windll.kernel32.SetConsoleTitleW('Polo CopyTrade - local read-only account connection')
     print('Enter production credentials in this local window only. Input is hidden. No trading is enabled.')
+    if remember:print('This launcher saves the connection using Windows current-user encryption for automatic reconnection.')
     key=getpass.getpass('API Key: ').strip();secret=getpass.getpass('API Secret: ').strip()
     if not key or not secret or any(c.isspace() or ord(c)<33 or ord(c)>126 for c in key+secret) or set(secret)<=set('*•.'):
         raise Invalid('Use complete original credentials, not masked dots or control characters')
+    if remember:
+        from .credential_store import CredentialVault
+        from .live import TradeClient
+        client=TradeClient(key=key,secret=secret,environment='production')
+        client.sync();client.account()
+        CredentialVault(data).save(key,secret)
     result=control_request(data,dict(command='credentials',key=key,secret=secret))
     key=secret=None
     if not result.get('ok'):raise Invalid(result.get('error','Local credential handoff failed'))
-    print('Credentials delivered to read-only supervisor memory. The account server will reconnect automatically.')
+    print('Account connected locally. '+('Windows encrypted remembering enabled.' if remember else 'Process memory only.'))
 
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Read-only monitor service supervisor')
     parser.add_argument('--data',type=Path,default=default_data_dir()/'studio.sqlite3')
     parser.add_argument('--port',type=int,choices=[8765],default=8765)
+    parser.add_argument('--remember',action='store_true',help='Verify and encrypt local credentials for reconnection after restart')
     group=parser.add_mutually_exclusive_group()
     group.add_argument('--connect-account',action='store_true')
     group.add_argument('--status',action='store_true')
     group.add_argument('--stop',action='store_true')
     args=parser.parse_args(argv)
-    if args.connect_account:enter_credentials(args.data);return
+    if args.remember and not args.connect_account:parser.error('--remember requires --connect-account')
+    if args.connect_account:enter_credentials(args.data,args.remember);return
     if args.status:print(json.dumps(control_request(args.data,{'command':'status'})));return
     if args.stop:control_request(args.data,{'command':'stop'});return
     supervisor=MonitorSupervisor(args.data,args.port)

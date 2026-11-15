@@ -1,10 +1,29 @@
 import unittest
+import json
+from pathlib import Path
+import tempfile
+from datetime import datetime,timezone,timedelta
+from unittest.mock import patch
 from backend.awake import AwakeRequest,CONTINUOUS,SYSTEM_REQUIRED
+from backend.awake import supervisor_is_active
 from backend.core import Invalid
 from backend.policy_draft import make_compounding_draft,preview_pool_margin,set_margin_stop_target,set_equity_leverage
 
 
 class RuntimePolicyTests(unittest.TestCase):
+    def test_sleep_protection_follows_live_supervisor_even_if_source_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data=Path(directory)/'state.db';status=data.parent/'supervisor-status.json'
+            clock=datetime.now(timezone.utc)
+            value=dict(mode='read_only_monitor',auto_trading=False,supervisor_pid=123,heartbeat=clock.isoformat(),backend_healthy=True)
+            status.write_text(json.dumps(value))
+            with patch('backend.supervisor.process_alive',return_value=True):
+                self.assertTrue(supervisor_is_active(data,clock))
+                value['backend_healthy']=False;status.write_text(json.dumps(value))
+                self.assertTrue(supervisor_is_active(data,clock))
+                self.assertFalse(supervisor_is_active(data,clock+timedelta(seconds=31)))
+            with patch('backend.supervisor.process_alive',return_value=False):self.assertFalse(supervisor_is_active(data,clock))
+
     def test_compounding_uses_only_allocated_pool_and_verified_net_profit(self):
         self.assertEqual(preview_pool_margin('60','0','0','1','117'),59)
         self.assertEqual(preview_pool_margin('60','60','0','1','177'),119)

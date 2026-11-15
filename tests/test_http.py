@@ -51,6 +51,24 @@ class HTTPTests(unittest.TestCase):
         self.assertFalse(state['live_available'])
         self.assertEqual(state['mode'],'paper')
 
+    def test_demo_execution_is_not_available_from_production_workspace(self):
+        self.assertFalse(self.request('/api/demo-v2/state')[1]['available'])
+        self.assertEqual(self.request('/api/demo-v2/start',{'confirmation':'START DEMO'},self.token)[0],400)
+        self.assertEqual(self.request('/testnet.html')[0],200)
+        self.assertEqual(self.request('/demo-ui.js')[0],200)
+        self.assertEqual(self.store.snapshot()['orders'],[])
+
+    def test_demo_controls_require_token_and_do_not_accept_browser_keys(self):
+        from backend.demo_session import DemoSession
+        demo=DemoSession(self.store.path.parent/'demo'/'state.db',self.store.path)
+        self.handler=make_handler(self.store,self.runner,self.port,demo=demo)
+        self.token=self.request('/api/session')[1]['csrf_token']
+        self.assertEqual(self.request('/api/demo-v2/inspect',{})[0],403)
+        self.assertEqual(self.request('/api/demo-v2/inspect',{'secret':'do-not-submit'},self.token)[0],400)
+        self.assertEqual(self.request('/api/live/start',{},self.token)[0],400)
+        self.assertEqual(self.request('/api/demo-v2/start',{'confirmation':'wrong'},self.token)[0],400)
+        self.assertIn(b'FUTURES DEMO',self.request('/')[1])
+
     def test_mutations_require_token_and_same_origin(self):
         self.assertEqual(self.request('/api/pause',{'paused':True})[0],403)
         self.assertEqual(self.request('/api/pause',{'paused':True},self.token,{'Origin':'https://evil.test'})[0],403)

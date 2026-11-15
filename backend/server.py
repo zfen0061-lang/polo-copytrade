@@ -32,7 +32,7 @@ class LocalHTTPServer(ThreadingHTTPServer):
         super().server_bind()
 
 
-def make_handler(store,runner,port,live=None):
+def make_handler(store,runner,port,live=None,demo=None):
     live=live or LiveManager(store)
     token=secrets.token_urlsafe(32)
     allowed_hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
@@ -70,6 +70,8 @@ def make_handler(store,runner,port,live=None):
                 self.send(200,store.snapshot())
             elif route=='/api/live/state':
                 self.send(200,live.status())
+            elif route=='/api/demo-v2/state':
+                self.send(200,demo.status() if demo else {'available':False,'production_allowed':False,'note':'Start the separate testnet session on port 8766'})
             elif route=='/api/runtime/state':
                 path=store.path.parent/'supervisor-status.json'
                 try:runtime=json.loads(path.read_text(encoding='utf8'))
@@ -91,7 +93,8 @@ def make_handler(store,runner,port,live=None):
                     writer.writerow({k:("'"+str(v) if isinstance(v,str) and v.startswith(('=','+','-','@')) else v) for k,v in e.items()})
                 self.send(200,('\ufeff'+output.getvalue()).encode(),'text/csv; charset=utf-8')
             else:
-                files={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/style.css':'style.css','/polo-logo.png':'polo-logo.png','/live-ui.js':'live-ui.js'}
+                files={'/':'testnet.html' if demo else 'index.html','/index.html':'index.html','/app.js':'app.js','/style.css':'style.css','/polo-logo.png':'polo-logo.png','/live-ui.js':'live-ui.js',
+                       '/testnet.html':'testnet.html','/demo-ui.js':'demo-ui.js','/demo.css':'demo.css'}
                 name=files.get(route)
                 if not name:
                     self.send(404,{'error':'Not found'})
@@ -119,7 +122,26 @@ def make_handler(store,runner,port,live=None):
                 if not isinstance(payload,dict): raise Invalid('Expected object')
                 route=urlsplit(self.path).path
                 parts=route.strip('/').split('/')
-                if route=='/api/traders':
+                if demo is not None and route.startswith('/api/live/'):
+                    raise Invalid('Use the separate demo execution controls; legacy account execution is disabled here')
+                if route.startswith('/api/demo-v2/'):
+                    if demo is None:raise Invalid('Demo execution is available only in the separate testnet session')
+                    action=route.rsplit('/',1)[-1]
+                    if action=='inspect':
+                        if payload:raise Invalid('Credentials are accepted only in the separate local demo prompt')
+                        result=demo.inspect()
+                    elif action=='configure':result=demo.configure(payload)
+                    elif action=='start':result=demo.start(payload.get('confirmation'))
+                    elif action=='pause':result=demo.pause(payload.get('paused'))
+                    elif action=='stop':result=demo.stop()
+                    elif action=='rehearsal':
+                        if set(payload)!={'symbol','action'}:raise Invalid('Only a demo symbol and action are accepted')
+                        result=demo.enqueue('rehearsal',payload['symbol'],payload['action'])
+                    elif action=='flatten-owned':
+                        if payload.get('confirmation')!='CLOSE OWNED DEMO':raise Invalid('Explicit owned-demo close confirmation is required')
+                        result=demo.enqueue('flatten_owned')
+                    else:raise Invalid('Unknown demo action')
+                elif route=='/api/traders':
                     result=store.save_trader(payload)
                 elif route=='/api/live/connect':
                     if payload:raise Invalid('Credentials are accepted only by the local terminal launcher / 请只在本机终端输入密钥')
@@ -190,22 +212,36 @@ def make_handler(store,runner,port,live=None):
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Polo CopyTrade — separate account and paper workspaces')
     parser.add_argument('--port',type=int,default=8765)
-    parser.add_argument('--data',type=Path,default=default_data_dir()/'studio.sqlite3')
+    parser.add_argument('--data',type=Path)
+    parser.add_argument('--demo-v2',action='store_true',help='Separate testnet-only execution workspace; production is never enabled')
+    parser.add_argument('--source-data',type=Path,help='Read-only source database for the separate demo workspace')
     parser.add_argument('--open-browser',action='store_true',help='Open the system browser after binding successfully')
     parser.add_argument('--read-only-account',action='store_true',help='Allow account reads but reject every account-follow start')
     parser.add_argument('--auto-connect-readonly',action='store_true',help='Reconnect and refresh read-only account snapshots in the backend')
     parser.add_argument('--no-runner',action='store_true',help='API verification without scheduled signal processing')
     args=parser.parse_args(argv)
+    if args.demo_v2:
+        if args.port!=8766:parser.error('The separate demo execution workspace must use port 8766')
+        args.read_only_account=True;args.no_runner=True
+    elif args.source_data:parser.error('--source-data requires --demo-v2')
+    args.data=args.data or default_data_dir()/('demo-v2/studio.sqlite3' if args.demo_v2 else 'studio.sqlite3')
+    if args.demo_v2 and args.data.resolve().parent==(args.source_data or default_data_dir()/'studio.sqlite3').resolve().parent:
+        parser.error('Demo data directory must be separate from the read-only production source')
     if args.auto_connect_readonly and not args.read_only_account:parser.error('Auto connection is available only in read-only mode')
     if not 1024<=args.port<=65535: parser.error('Choose a port between 1024 and 65535')
     store=Store(args.data)
     runner=Runner(store)
     live=LiveManager(store,execution_allowed=not args.read_only_account)
+    demo=None
+    if args.demo_v2:
+        from .demo_session import DemoSession
+        demo=DemoSession(args.data,args.source_data or default_data_dir()/'studio.sqlite3')
     try:
-        server=LocalHTTPServer(('127.0.0.1',args.port),make_handler(store,runner,args.port,live))
+        server=LocalHTTPServer(('127.0.0.1',args.port),make_handler(store,runner,args.port,live,demo))
     except OSError:
         raise SystemExit('Port unavailable; choose --port 8766 or close the previous instance.')
     if not args.no_runner: runner.start()
+    if demo:demo.start_control()
     poller=ReadOnlyAccountPoller(live) if args.auto_connect_readonly else None
     if poller:poller.start()
     print(f'Polo CopyTrade: http://127.0.0.1:{args.port}',flush=True)
@@ -217,6 +253,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
+        if demo:demo.shutdown()
         if poller:poller.close()
         if not args.no_runner: runner.shutdown()
         live.shutdown()

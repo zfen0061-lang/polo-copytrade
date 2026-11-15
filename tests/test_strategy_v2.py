@@ -2,6 +2,7 @@ from datetime import datetime,timedelta,timezone
 from decimal import Decimal as D
 from pathlib import Path
 import tempfile
+import json
 import unittest
 
 from backend.core import Invalid
@@ -79,6 +80,66 @@ class DemoFake:
 
 
 class StrategyV2Tests(unittest.TestCase):
+    def test_restart_cancels_known_stop_left_after_a_verified_flat_close(self):
+        self.engine.handle(signal('before-close-crash'))
+        stop_id=next(iter(self.broker.stops))
+        intent,_=self.engine.plan(signal('close-before-cancel','CLOSE_LONG'))
+        self.engine.submit(intent)
+        self.assertEqual(self.engine.book.positions(),[])
+        self.assertEqual(self.broker.stops[stop_id]['algoStatus'],'NEW')
+        self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)
+        self.engine.recover()
+        self.assertEqual(self.broker.stops[stop_id]['algoStatus'],'CANCELED')
+        self.assertEqual(self.broker.submit_count,2)
+
+    def test_demo_transport_rechecks_endpoint_before_account_or_market_reads(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        client=SimpleNamespace(environment='testnet',base='https://demo-fapi.binance.com',key='fake-demo',account=Mock(),quote=Mock(),rules=Mock(),sync=Mock())
+        broker=DemoBroker(client);client.base='https://fapi.binance.com'
+        for call in (broker.account,broker.sync,lambda:broker.rules('BTCUSDT'),lambda:broker.quote('BTCUSDT')):
+            with self.assertRaises(Halt):call()
+        for method in (client.account,client.sync,client.rules,client.quote):method.assert_not_called()
+
+    def test_stop_verification_accepts_equivalent_numeric_format_and_checks_side(self):
+        self.engine.handle(signal('numeric-stop'))
+        stop=next(iter(self.broker.stops.values()))
+        stop['triggerPrice']='96.00000000';stop['quantity']=format(D(stop['quantity']),'.8f')
+        self.engine.recover()
+        self.assertEqual(len(self.broker.stops),1)
+        params=json.loads(self.engine.book.db.execute('SELECT params FROM protection').fetchone()[0])
+        wrong=dict(stop,side='BUY')
+        self.assertFalse(self.engine.stop_matches(wrong,params))
+    def test_actual_stop_fill_is_reconciled_after_restart_without_reopening(self):
+        self.engine.handle(signal('protected'))
+        stop=next(iter(self.broker.stops.values()))
+        self.broker.price=D('96')
+        order=self.broker.place(dict(symbol='BTCUSDT',side='SELL',positionSide='LONG',quantity=stop['quantity'],newClientOrderId='exchange-stop-fill'))
+        stop.update(algoStatus='FINISHED',actualOrderId=order['orderId'])
+        def reject_cancel_finished(client):raise AssertionError('Finished stop must not be canceled')
+        self.broker.cancel_stop=reject_cancel_finished
+        self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)
+        self.engine.recover()
+        self.assertEqual(self.engine.book.positions(),[])
+        self.assertLess(self.engine.book.capital(),D('60'))
+        self.assertEqual(self.broker.submit_count,2)
+
+    def test_replaced_stop_remains_in_journal_until_cancellation_is_confirmed(self):
+        self.engine.handle(signal('replace-protection'))
+        old=next(iter(self.broker.stops))
+        self.broker.stops[old]['triggerPrice']='95'
+        original_cancel=self.broker.cancel_stop
+        def lost_cancel(client):raise TimeoutError('cancel acknowledgement unknown')
+        self.broker.cancel_stop=lost_cancel
+        with self.assertRaises(TimeoutError):self.engine.protect('BTCUSDT','LONG','replacement')
+        self.assertEqual(self.engine.book.db.execute('SELECT COUNT(*) FROM retired_stops').fetchone()[0],1)
+        self.broker.cancel_stop=original_cancel
+        self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)
+        self.engine.recover()
+        self.assertEqual(self.broker.stops[old]['algoStatus'],'CANCELED')
+        self.assertEqual(self.engine.book.db.execute('SELECT COUNT(*) FROM retired_stops').fetchone()[0],0)
+        self.assertEqual(self.broker.submit_count,1)
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.path=Path(self.temp.name)/'journal.sqlite3'

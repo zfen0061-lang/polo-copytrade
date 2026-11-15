@@ -73,7 +73,29 @@ def main():
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-    print('Packaged browser and loopback HTTP checks passed; no account/order requests.')
+    with tempfile.TemporaryDirectory() as folder:
+        demo_process=subprocess.Popen([str(exe),'--demo','--preview','--no-browser',
+            '--data',str(Path(folder)/'demo/state.sqlite3'),'--source-data',str(Path(folder)/'source/state.sqlite3')],
+            env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        try:
+            end=time.monotonic()+30
+            while True:
+                if demo_process.poll() is not None:raise RuntimeError('Packaged Demo preview exited early')
+                try:
+                    with urllib.request.urlopen('http://127.0.0.1:8766/api/demo-v2/state',timeout=2) as response:demo=json.load(response)
+                    break
+                except (urllib.error.URLError,TimeoutError):
+                    if time.monotonic()>=end:raise RuntimeError('Packaged Demo preview did not start')
+                    time.sleep(.25)
+            if not demo['available'] or demo['configured'] or demo['running'] or demo['production_allowed']:
+                raise RuntimeError('Packaged Demo preview must have no credentials, active orders or production capability')
+            with urllib.request.urlopen('http://127.0.0.1:8766/',timeout=2) as response:
+                if b'FUTURES DEMO' not in response.read():raise RuntimeError('Packaged Demo page missing')
+        finally:
+            demo_process.terminate()
+            try:demo_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:demo_process.kill();demo_process.wait()
+    print('Packaged browser, account HTTP and credential-free Demo startup checks passed; no exchange orders.')
 
 
 if __name__ == '__main__':

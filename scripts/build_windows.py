@@ -32,12 +32,15 @@ def main():
     for source, target in (
         ('LICENSE', 'LICENSE'), ('docs/PORTABLE.md', 'START_HERE.md'),
         ('docs/ACCOUNT_GUIDE.md', 'ACCOUNT_GUIDE.md'),
+        ('docs/DEMO_EXECUTION.md','DEMO_EXECUTION.md'),
     ):
         shutil.copyfile(ROOT / source, app / target)
     (app / 'Connect-Account.cmd').write_text(
         '@echo off\ncd /d "%~dp0"\nPoloCopyTrade.exe --connect\npause\n', encoding='ascii')
     (app / 'Check-Setup.cmd').write_text(
         '@echo off\ncd /d "%~dp0"\nPoloCopyTrade.exe --check\npause\n', encoding='ascii')
+    (app / 'Open-Demo-Preview.cmd').write_text('@echo off\ncd /d "%~dp0"\nPoloCopyTrade.exe --demo --preview\npause\n',encoding='ascii')
+    (app / 'Connect-Demo.cmd').write_text('@echo off\ncd /d "%~dp0"\nPoloCopyTrade.exe --demo\npause\n',encoding='ascii')
     licenses = app / 'THIRD_PARTY_LICENSES'
     licenses.mkdir(exist_ok=True)
     versions = {}

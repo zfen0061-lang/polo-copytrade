@@ -16,12 +16,19 @@ class DemoBroker:
 
     def identity(self):return hashlib.sha256(self.client.key.encode()).hexdigest()
 
-    def request(self,method,path,params=None):
+    def assert_demo(self):
         if self.client.environment!='testnet' or self.client.base!=self.base:
             raise Halt('Demo endpoint identity changed; order transport blocked')
+
+    def request(self,method,path,params=None):
+        self.assert_demo()
         return self.client.request(method,path,params,signed=True)
 
+    def sync(self):
+        self.assert_demo();self.client.sync()
+
     def account(self):
+        self.assert_demo()
         snapshot=self.client.account()
         raw=self.request('GET','/fapi/v3/account')
         asset=next((a for a in raw.get('assets',[]) if a.get('asset')=='USDT'),None)
@@ -36,8 +43,10 @@ class DemoBroker:
         return selected
 
     def fee_rate(self,symbol):return self.request('GET','/fapi/v1/commissionRate',{'symbol':symbol})['takerCommissionRate']
-    def rules(self,symbol):return self.client.rules(symbol)
-    def quote(self,symbol):return self.client.quote(symbol)
+    def rules(self,symbol):
+        self.assert_demo();return self.client.rules(symbol)
+    def quote(self,symbol):
+        self.assert_demo();return self.client.quote(symbol)
     def open_orders(self,symbol):return self.request('GET','/fapi/v1/openOrders',{'symbol':symbol})
     def open_stops(self,symbol):return self.request('GET','/fapi/v1/openAlgoOrders',{'symbol':symbol})
     def place(self,params):return self.request('POST','/fapi/v1/order',params)

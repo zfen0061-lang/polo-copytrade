@@ -142,6 +142,7 @@ export function createAccountUI({api,toast,language}) {
     }
     const actions=document.createElement('div');actions.className='button-row';
     actions.innerHTML=`<span class="pill ${remembered?'green':'subtle'}">${remembered?text('Windows 加密保存','WINDOWS ENCRYPTED'):text('仅本次会话','SESSION ONLY')}</span>${account.connected&&!remembered?`<button class="secondary" data-runtime-action="remember-account">${text('记住当前连接','Remember connection')}</button>`:''}${remembered?`<button class="ghost" data-runtime-action="forget-account">${text('不再记住连接','Forget saved connection')}</button>`:''}${supervised?`<button class="ghost danger" data-runtime-action="stop">${text('停止后台','Stop background monitor')}</button>`:''}`;
+    const demoLink=document.createElement('a');demoLink.className='secondary link-button';demoLink.href='http://127.0.0.1:8766/';demoLink.target='_blank';demoLink.rel='noopener';demoLink.textContent=text('测试网执行台','Futures Demo workspace');actions.appendChild(demoLink);
     runtimeCard.appendChild(actions);
     if(runtime?.credential_error){const warning=document.createElement('p');warning.className='form-error';warning.textContent=runtime.credential_error;runtimeCard.appendChild(warning);}
     const connected=account.connected,live=account.environment==='production',readOnly=account.execution_allowed===false;

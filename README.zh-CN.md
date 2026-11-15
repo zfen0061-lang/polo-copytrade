@@ -1,5 +1,7 @@
 # Polo CopyTrade · v0.3.0
 
+新增测试网执行台：[合约 Demo 使用说明](docs/DEMO_EXECUTION.md)。独立 8766 页面支持显式启动测试跟随、演练、累计亏损口径选择及账本恢复；真实执行保持关闭。代码与浏览器假网关测试已通过，实际币安 Demo 验单仍需单独的测试密钥。
+
 源码新增：[持续只读监测](docs/CONTINUOUS_MONITOR.md)，包括 Windows 登录启动、后台异常恢复及独立账户刷新。旧版 v0.3.0-preview 下载包不包含此功能。V2 执行模块仅限测试网，尚未接入页面。
 
 中文 · [English](README.md)

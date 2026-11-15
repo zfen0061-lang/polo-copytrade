@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Polo CopyTrade · 测试网执行台</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/demo.css"></head>
+<body><main class="demo-shell">
+<header class="demo-header"><div class="demo-brand"><img src="/polo-logo.png" alt="Polo" width="48" height="48"><div><strong>Polo CopyTrade</strong><span>FUTURES DEMO / 虚拟资金</span></div></div><a class="secondary link-button" href="http://127.0.0.1:8765" target="_blank" rel="noopener">查看真实账户只读监测</a><span id="demo-connection" class="pill subtle">正在连接后台</span></header>
+<h1>测试网跟单执行台</h1><p class="muted">验证信号到订单的完整流程。此页面仅允许币安合约 Demo 地址，不会使用已保存的真实账户密钥。</p>
+<p id="preview-note" class="callout small">正在检查测试网会话……</p><p id="demo-error" class="form-error" role="alert"></p>
+<div class="demo-status-grid">
+<section class="card"><span class="eyebrow">DEMO ACCOUNT</span><h2>模拟交易账户</h2><p id="demo-account">尚未验证</p><p id="demo-account-positions" class="small muted"></p><button id="demo-inspect" class="secondary">验证 Demo 账户（不下单）</button></section>
+<section class="card"><span class="eyebrow">LOCKED PUBLIC SOURCE</span><h2>熬鹰资本 · 公开信号</h2><p id="demo-source">等待检查</p><p class="small muted">读取现有监测程序的记录，不会重复启动采集浏览器。公开操作存在发布与轮询延迟。</p></section>
+<section class="card"><span class="eyebrow">STRATEGY JOURNAL</span><h2>测试策略账本</h2><p id="demo-capital">尚未建立</p><p class="small muted">只计本程序已核实的成交净收益与资金费，不把其他账户资金或浮盈加入复投预算。</p></section>
+</div>
+<div class="demo-columns"><section class="card"><div class="section-head"><h2>测试参数</h2><span id="demo-policy-state" class="pill subtle">未保存</span></div>
+<form id="demo-policy"><div class="form-grid">
+<label>初始策略预算 / USDT<input name="initial_capital" type="number" value="60" min="0.01" step="0.01" required></label>
+<label>累计亏损或回撤金额 / USDT<input name="max_loss" type="number" value="60" min="0.01" step="0.01" required></label>
+<label class="span-two">累计亏损计算方式<select name="loss_basis" required><option value="">请明确选择，不自动代选</option><option value="initial_net_loss">相对初始本金的净亏损</option><option value="peak_drawdown">相对策略净值最高点的回撤</option></select></label>
+<label>加密货币杠杆（上限 10）<input name="crypto_leverage" type="number" value="10" min="1" max="10" step="1" required></label>
+<label>股票类合约杠杆（上限 5）<input name="equity_leverage" type="number" value="3" min="1" max="5" step="1" required></label>
+<label>保证金亏损止损目标 / %<input name="margin_stop_percent" type="number" value="40" min="0.01" max="99" step="0.01" required></label>
+<label>最大不利入场价差 / %<input name="deviation_percent" type="number" value="3" min="0.01" max="99" step="0.01" required></label>
+<label>新开仓信号有效期 / 秒<input name="max_signal_age" type="number" value="60" min="1" max="3600" step="1" required></label>
+<label>加密货币合约（逗号分隔）<input name="crypto_symbols" value="BTCUSDT, ETHUSDT, ZECUSDT" required></label>
+<label class="span-two">股票类合约（逗号分隔，可留空）<input name="equity_symbols" placeholder="例如 NVDAUSDT；需 Demo 实际支持"></label>
+</div><p class="small muted">止损目标按保证金比例、在费用前估算；成交价格仍可能受跳空和滑点影响。60 USDT 是策略预算，并未划转或隔离交易所账户资金。</p>
+<p class="callout small">亏损口径示例：初始 60、限制 60，按初始本金净亏损计算时净值阈值为 0；若最高净值涨到 120，按高点回撤 60 计算时阈值为 60。触发后程序会尝试平掉自己管理的 Demo 仓位并停止跟随。</p>
+<button id="demo-save" class="primary" type="submit">保存测试参数（不下单）</button></form></section>
+<section class="card"><div class="section-head"><h2>执行控制</h2><span id="demo-phase" class="pill subtle">未启动</span></div>
+<p class="small muted">启动时当前历史作为基线，不追补旧开仓。一个策略资金池同一时刻只分配给一个仓位；收到匹配方向的平仓信号则全平该程序仓位。</p>
+<label class="check"><input id="demo-confirm" type="checkbox">我确认使用 Demo 虚拟资金，已核对测试参数和交易所杠杆。</label>
+<div class="button-row"><button id="demo-start" class="primary" disabled>启动测试网跟随</button><button id="demo-pause" class="secondary" disabled>暂停新开仓</button><button id="demo-stop" class="ghost" disabled>停止跟随</button></div>
+<p class="small muted">停止跟随不主动平仓，已确认的交易所止损保留。出现不明订单结果、手动仓位或信号中断时会停止，需人工核对后恢复。不会自动接管任何既有仓位。</p>
+<div class="divider"></div><h3>显式交易演练 · Demo only</h3><p class="small muted">下面的按钮提交演练信号到同一测试执行器，不代表熬鹰资本的操作。只在你启动测试网会话后可用。</p>
+<label>演练合约<select id="rehearsal-symbol"></select></label><div class="button-row demo-rehearsal"><button class="secondary" data-demo-action="OPEN_LONG" disabled>演练开多</button><button class="secondary" data-demo-action="OPEN_SHORT" disabled>演练开空</button><button class="ghost" data-demo-action="CLOSE_LONG" disabled>演练平多</button><button class="ghost" data-demo-action="CLOSE_SHORT" disabled>演练平空</button></div>
+<button id="demo-flatten" class="ghost danger" disabled>平掉本程序的 Demo 仓位</button>
+<p class="small muted">此测试会话不自动恢复下单。若重启后账本仍有持仓，程序会核对保护单并要求你在 Demo 交易所处理后再启动新跟随。</p>
+</section></div>
+<section class="card"><h2>本程序管理的 Demo 仓位</h2><div class="table-wrap"><table><thead><tr><th>合约 / 方向</th><th>数量</th><th>成交均价</th><th>杠杆</th><th>来源</th></tr></thead><tbody id="demo-positions"></tbody></table></div></section>
+<section class="card"><h2>执行与查单日志</h2><p class="small muted">响应不确定的订单会按固定客户订单编号查单，不盲目重发。测试通过需结合 Demo 交易所实际订单、成交和止损核对。</p><div id="demo-logs"></div></section>
+<footer>Endpoint: https://demo-fapi.binance.com · 真实账户执行关闭 · Polo CopyTrade</footer>
+</main><script type="module" src="/demo-ui.js"></script></body></html>

@@ -19,6 +19,10 @@ ZERO=dec('0')
 TERMINAL={'FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'}
 
 
+class RiskLimit(Halt):
+    """A verified strategy loss threshold; callers may close owned demo positions."""
+
+
 @dataclass(frozen=True)
 class StrategyPolicy:
     initial_capital: str
@@ -74,6 +78,7 @@ class CapitalBook:
           CREATE TABLE IF NOT EXISTS intervals(symbol TEXT,side TEXT,start_ms INTEGER,end_ms INTEGER);
           CREATE TABLE IF NOT EXISTS protection(symbol TEXT,side TEXT,client_id TEXT,params TEXT,
             PRIMARY KEY(symbol,side));
+          CREATE TABLE IF NOT EXISTS retired_stops(client_id TEXT PRIMARY KEY,symbol TEXT,side TEXT);
         ''')
         fingerprint=hashlib.sha256(json.dumps([identity,policy.public()],sort_keys=True).encode()).hexdigest()
         previous=self.get('fingerprint')
@@ -127,6 +132,17 @@ class StrategyEngine:
     def close(self):self.book.db.close()
 
     @staticmethod
+    def stop_matches(status,params):
+        try:
+            return (dec(status['triggerPrice'])==dec(params['triggerPrice'])
+                and dec(status['quantity'])==dec(params['quantity'])
+                and all(status.get(k)==params[k] for k in ('symbol','side','positionSide','workingType'))
+                and status.get('orderType',status.get('type'))==params['type']
+                and str(status.get('reduceOnly',False)).lower()==str(params.get('reduceOnly','false')).lower()
+                and str(status.get('closePosition',False)).lower()=='false')
+        except (KeyError,Invalid):return False
+
+    @staticmethod
     def actual_positions(account):
         actual={}
         for position in account['positions']:
@@ -177,8 +193,8 @@ class StrategyEngine:
         peak=max(dec(self.book.get('peak')),equity)
         with self.book.db:self.book.db.execute('UPDATE meta SET value=? WHERE key=?',(str(peak),'peak'))
         reference=dec(self.policy.initial_capital) if self.policy.loss_basis=='initial_net_loss' else peak
-        if reference-equity>=dec(self.policy.max_loss):raise Halt('Strategy cumulative loss limit reached; new entries stopped')
-        if equity<=0:raise Halt('Strategy capital is exhausted')
+        if reference-equity>=dec(self.policy.max_loss):raise RiskLimit('Strategy cumulative loss limit reached; new entries stopped')
+        if equity<=0:raise RiskLimit('Strategy capital is exhausted')
 
     def plan(self,event):
         symbol,action=event['symbol'],event['action']
@@ -228,7 +244,9 @@ class StrategyEngine:
             if qty!=dec(owned['qty']):raise Halt('Owned residual does not fit quantity step; manual review required')
             params['type']='MARKET'
             if not account['hedge_mode']:params['reduceOnly']='true'
-        if not dec(lot['minQty'])<=qty<=dec(lot['maxQty']):return None,'quantity_filter'
+        if not dec(lot['minQty'])<=qty<=dec(lot['maxQty']):
+            if not opening:raise Halt('Full owned close does not fit exchange quantity limits; review the demo position')
+            return None,'quantity_filter'
         params['quantity']=format(qty,'f')
         return dict(event=dict(event),params=params,position_side=position_side,opening=opening,
                     leverage=leverage,submitted_ms=int(time.time()*1000)),None
@@ -295,7 +313,21 @@ class StrategyEngine:
             except Exception:raise Halt('Pending order remains unknown; no resubmission') from None
             self.settle(intent,response)
         self.reconcile_stops()
-        for p in self.book.positions():self.protect(p['symbol'],p['side'],'recovery-'+str(p['opened_ms']))
+        owned={(p['symbol'],p['side']):p for p in self.book.positions()}
+        targets=set(owned)|{(r['symbol'],r['side']) for r in self.book.db.execute('SELECT symbol,side FROM protection')}
+        for symbol,side in targets:
+            self.protect(symbol,side,'recovery-'+str(owned.get((symbol,side),{}).get('opened_ms',0)))
+        self.cleanup_retired_stops()
+
+    def cleanup_retired_stops(self):
+        for row in self.book.db.execute('SELECT * FROM retired_stops').fetchall():
+            status=self.broker.query_stop(row['client_id'])
+            if status.get('algoStatus')=='NEW':
+                self.broker.cancel_stop(row['client_id'])
+                status=self.broker.query_stop(row['client_id'])
+            if status.get('algoStatus') not in ('CANCELED','FINISHED','EXPIRED'):
+                raise Halt('Retired stop cancellation is not confirmed')
+            with self.book.db:self.book.db.execute('DELETE FROM retired_stops WHERE client_id=?',(row['client_id'],))
 
     def reconcile_stops(self):
         actual=self.actual_positions(self.broker.account())
@@ -322,8 +354,10 @@ class StrategyEngine:
         old=self.book.db.execute('SELECT * FROM protection WHERE symbol=? AND side=?',(symbol,side)).fetchone()
         if not position:
             if old:
-                self.broker.cancel_stop(old['client_id'])
                 state=self.broker.query_stop(old['client_id'])
+                if state.get('algoStatus')=='NEW':
+                    self.broker.cancel_stop(old['client_id'])
+                    state=self.broker.query_stop(old['client_id'])
                 if state.get('algoStatus') not in ('CANCELED','FINISHED','EXPIRED'):
                     raise Halt('Old stop cancellation is not confirmed')
                 with self.book.db:self.book.db.execute('DELETE FROM protection WHERE symbol=? AND side=?',(symbol,side))
@@ -336,21 +370,22 @@ class StrategyEngine:
                     triggerPrice=format(trigger,'f'),workingType='MARK_PRICE')
         if not account['hedge_mode']:params['reduceOnly']='true'
         if old:
-            old_params=json.loads(old['params'])
             status=self.broker.query_stop(old['client_id'])
-            if status.get('algoStatus')=='NEW' and all(str(status.get(k))==str(v) for k,v in params.items() if k in ('triggerPrice','quantity','positionSide')):
+            if status.get('algoStatus')=='NEW' and self.stop_matches(status,params):
                 return
         client='ps2_'+hashlib.sha256((reference+symbol+side+position['qty']).encode()).hexdigest()[:28]
         params['clientAlgoId']=client
         # Persist protection intent before submission. Recovery queries its stable id.
         if not old or old['client_id']!=client:
-            with self.book.db:self.book.db.execute('INSERT OR REPLACE INTO protection VALUES (?,?,?,?)',(symbol,side,client,json.dumps(params)))
+            with self.book.db:
+                if old:self.book.db.execute('INSERT OR IGNORE INTO retired_stops VALUES (?,?,?)',(old['client_id'],symbol,side))
+                self.book.db.execute('INSERT OR REPLACE INTO protection VALUES (?,?,?,?)',(symbol,side,client,json.dumps(params)))
             try:self.broker.place_stop(params)
             except Exception:pass
         status=self.broker.query_stop(client)
-        if status.get('algoStatus')!='NEW' or any(str(status.get(k))!=str(v) for k,v in params.items() if k in ('triggerPrice','quantity','positionSide')):
+        if status.get('algoStatus')!='NEW' or not self.stop_matches(status,params):
             raise Halt('Exchange stop is not confirmed; no new orders allowed')
-        if old and old['client_id']!=client:self.broker.cancel_stop(old['client_id'])
+        self.cleanup_retired_stops()
 
     def handle(self,event):
         self.recover()

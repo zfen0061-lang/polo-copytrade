@@ -65,6 +65,11 @@ class PackagingTests(unittest.TestCase):
             polo.main()
         connect.assert_called_once_with(['--data', 'existing.sqlite3'])
 
+    def test_demo_launcher_is_separate_and_preview_does_not_request_credentials(self):
+        with patch('sys.argv',['PoloCopyTrade.exe','--demo','--preview','--no-browser']),patch('backend.demo_connect.main') as demo,patch('backend.connect.main') as production:
+            polo.main()
+        demo.assert_called_once_with(['--preview','--no-browser']);production.assert_not_called()
+
     def app_folder(self):
         app = self.root / 'dist/PoloCopyTrade'
         app.mkdir(parents=True)

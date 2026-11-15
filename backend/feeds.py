@@ -70,6 +70,21 @@ class PublicCollector:
 
     def fetch(self, known):
         portfolio=urllib.parse.urlsplit(self.url).path.rstrip('/').rsplit('/',1)[-1]
+        started=set();operations=[]
+        def remember_request(request):started.add(request)
+        def remember_response(response):
+            if response.request in started and self.matches_public_response(response,'order-history',portfolio):
+                operations.append(response)
+        # The site may restore the active tab and fetch before our click. Keep
+        # responses from requests started during this navigation, not old pages.
+        self.page.on('request',remember_request)
+        self.page.on('response',remember_response)
+        try:return self._fetch_page(known,portfolio,operations)
+        finally:
+            self.page.remove_listener('request',remember_request)
+            self.page.remove_listener('response',remember_response)
+
+    def _fetch_page(self,known,portfolio,operations):
         # The SSR heading exists before React knows the portfolio ID. Waiting
         # only for the heading can submit portfolioId="" and display no records.
         with self.page.expect_response(lambda r:self.matches_public_response(r,'detail',portfolio),timeout=20000) as detail:
@@ -86,18 +101,13 @@ class PublicCollector:
         tab=self.page.get_by_role('tab', name='最新操作记录', exact=True)
         from playwright.sync_api import TimeoutError as BrowserTimeout
         for attempt in range(2):
-            try:
-                # A visible SSR panel may say "no records" before hydration.
-                # Require the public request triggered by the UI, not just a
-                # visible tab, before trusting its rendered operation records.
-                with self.page.expect_response(lambda r:self.matches_public_response(r,'order-history',portfolio),
-                    timeout=15000) as pending:
-                    tab.click(timeout=15000)
-                operation_response=pending.value
-                break
-            except BrowserTimeout:
-                if attempt:raise
-                self.page.wait_for_timeout(2000)
+            tab.click(timeout=15000)
+            deadline=time.monotonic()+15
+            while not operations and time.monotonic()<deadline:self.page.wait_for_timeout(100)
+            if operations:break
+            if attempt:raise BrowserTimeout('No verified operation request for this navigation')
+            self.page.wait_for_timeout(2000)
+        operation_response=operations[0]
         self.verify_operation_response(operation_response)
         panel = self.page.get_by_role('tabpanel', name='最新操作记录', exact=True)
         panel.wait_for(timeout=15000)

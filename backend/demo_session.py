@@ -15,6 +15,8 @@ from pathlib import Path
 import queue
 import secrets
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -51,7 +53,8 @@ class PublicSource:
             fresh=bool(trader['enabled'] and monitor.get('owner') and monitor.get('status')=='running'
                        and age is not None and 0<=age<60 and 0<=time.time()-monitor.get('heartbeat',0)<60)
             latest=db.execute('SELECT COALESCE(MAX(id),0) FROM events WHERE trader_id=?',('aoying',)).fetchone()[0]
-            return dict(fresh=fresh,status=monitor.get('status'),last_poll=stamp,age_seconds=age,
+            watching=bool(trader['enabled'] and monitor.get('owner') and 0<=time.time()-monitor.get('heartbeat',0)<60)
+            return dict(fresh=fresh,watching=watching,status=monitor.get('status'),last_poll=stamp,age_seconds=age,
                         latest_id=latest,trader_name=AOYING_NAME,portfolio_id=monitor['portfolio_id'],error=monitor.get('last_error',''))
     def events(self,cursor):
         with self.db() as db:
@@ -73,6 +76,15 @@ class DemoSession:
         self.lock=threading.RLock();self.io_lock=threading.RLock();self.thread=None;self.stop_event=threading.Event()
         self.commands=queue.Queue(maxsize=10);self.running=False;self.entries_enabled=False;self.error='';self.phase='idle'
         self.account=None;self.account_updated=None;self.last_tick=None;self.logs=[];self.cursor=0
+        self.source_waiting=False
+        self.verification_process=None;self.verification_folder=None
+        self.scope_config={}
+        try:self.scope_config=json.loads((self.data.parent/'demo-scope.json').read_text(encoding='utf8'))
+        except (OSError,ValueError):pass
+        from .credential_store import DemoCredentialVault
+        self.vault=DemoCredentialVault(self.data)
+        try:self.credentials=self.vault.load()
+        except Invalid as exc:self.error=str(exc)
         if self.policy_path.is_file():
             try:self.policy=StrategyPolicy(**json.loads(self.policy_path.read_text(encoding='utf8')))
             except Exception:self.error='Saved demo policy is invalid; configure it again'
@@ -103,8 +115,9 @@ class DemoSession:
                         try:
                             pair=validate_pair(message.get('key'),message.get('secret'))
                             with self.idle_io(),self.lock:
+                                if message.get('remember') is True:self.vault.save(*pair)
                                 self.credentials=pair;self.broker=None;self.account=None;self.account_updated=None;self.error=''
-                            result=dict(accepted=True,environment='testnet',storage='session_memory')
+                            result=dict(accepted=True,environment='testnet',storage='windows_dpapi_user' if self.vault.exists() else 'session_memory')
                         except Exception:result=dict(accepted=False,error='Stop the Demo session and enter complete unmasked Demo credentials locally')
                         connection.send_bytes(json.dumps(result).encode())
                 except (EOFError,OSError,ValueError,multiprocessing.context.AuthenticationError):
@@ -147,6 +160,10 @@ class DemoSession:
                 connected=self.broker is not None,phase=self.phase,running=self.running,entries_enabled=self.entries_enabled,
                 policy=asdict(self.policy) if self.policy else None,account=self.account,account_updated=self.account_updated,
                 error=self.error,last_tick=self.last_tick,source=source,journal=journal,logs=list(self.logs),cursor=self.cursor,
+                source_waiting=self.source_waiting,
+                saved_demo_connection=self.vault.exists(),verification=self.verification_status(),
+                scope=dict(symbol_count=len(self.policy.symbols) if self.policy else 0,
+                           prepare_demo_leverage=self.scope_config.get('prepare_demo_leverage') is True),
                 note='Testnet orders require explicit start. No production credentials or real orders are used.')
 
     @staticmethod
@@ -180,19 +197,60 @@ class DemoSession:
         if not self.io_lock.acquire(blocking=False):raise Invalid('Demo I/O is busy; stop following before manual verification or configuration')
         try:
             if self.running:raise Invalid('Stop demo following before changing account/session configuration')
+            if self.verification_active():raise Invalid('The bounded Demo stop check is still active')
             yield
         finally:self.io_lock.release()
 
     def start(self,confirmation):
         if confirmation!='START DEMO':raise Invalid('Explicit START DEMO confirmation is required')
         with self.lock:
+            if self.verification_active():raise Invalid('Wait for the Demo stop check and cleanup before following')
             if self.running or (self.thread and self.thread.is_alive()):raise Invalid('The demo session is already active')
             if not self.policy:raise Invalid('Save the complete demo policy, including the cumulative loss basis, first')
             source=self.source.inspect()
-            if not source['fresh']:raise Invalid('The locked public signal source is not fresh; no demo orders are allowed')
+            if not source['fresh'] and not (source.get('watching') and source.get('status') in ('running','retrying')):
+                raise Invalid('The locked public source is inactive; start observation before Demo following')
             while not self.commands.empty():self.commands.get_nowait()
             self.stop_event.clear();self.running=True;self.entries_enabled=True;self.phase='starting';self.error=''
             self.thread=threading.Thread(target=self.run,name='demo-v2-follow',daemon=True);self.thread.start()
+        return self.status()
+
+    def verification_active(self):
+        return self.verification_process is not None and self.verification_process.poll() is None
+
+    def verification_status(self):
+        result=dict(active=self.verification_active(),progress=None,result=None)
+        if self.verification_folder:
+            for field,name in [('progress','progress.json'),('result','result.json')]:
+                try:result[field]=json.loads((self.verification_folder/name).read_text(encoding='utf8'))
+                except (OSError,ValueError):pass
+            if not result['active'] and result['result'] is None:
+                result['error']='Demo stop check ended without a result; inspect the local verification log'
+        return result
+
+    def verify_stop(self,confirmation,seconds=180):
+        if confirmation!='VERIFY DEMO STOP':raise Invalid('Explicit VERIFY DEMO STOP confirmation is required')
+        if type(seconds) is not int or not 1<=seconds<=900:raise Invalid('Choose 1-900 seconds')
+        with self.idle_io(),self.lock:
+            if not self.vault.exists():raise Invalid('Remember the separate Demo connection locally before background verification')
+            journal=self.journal_state()
+            if journal['positions'] or journal['pending_count']:
+                raise Invalid('Review owned Demo positions and unresolved orders first')
+            from .paths import resource_root
+            folder=self.data.parent.parent/'demo-verification'/('job-'+uuid.uuid4().hex)
+            folder.parent.mkdir(parents=True,exist_ok=True)
+            command=([sys.executable,'--demo-verify'] if getattr(sys,'frozen',False)
+                     else [sys.executable,'-m','backend.demo_verify'])
+            command+=['--saved','--no-handoff','--data',str(self.data),'--report-dir',str(folder),'--max-wait',str(seconds)]
+            env=dict(os.environ)
+            for key in ('POLO_BINANCE_API_KEY','POLO_BINANCE_API_SECRET','POLO_DEMO_API_KEY','POLO_DEMO_API_SECRET'):
+                env.pop(key,None)
+            with open(folder.parent/(folder.name+'.log'),'ab') as output:
+                self.verification_process=subprocess.Popen(command,cwd=resource_root(),env=env,
+                    stdin=subprocess.DEVNULL,stdout=output,stderr=output,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+            self.verification_folder=folder
+            self.log('Bounded Demo stop check explicitly started; following remains off',origin='verification')
         return self.status()
 
     def pause(self,paused):
@@ -218,19 +276,8 @@ class DemoSession:
         return dict(queued=True,testnet_only=True)
 
     def sync_funding(self,engine):
-        end=int(time.time()*1000)
-        rows=engine.book.db.execute('SELECT symbol,MIN(start_ms) FROM intervals GROUP BY symbol').fetchall()
-        # Income requests have a bounded window. Iterate all owned history in
-        # seven-day chunks, with a per-tick progress cursor and an overlap.
-        for row in rows:
-            symbol,start=row
-            watermark=engine.book.get('funding_cursor:'+symbol)
-            begin=max(int(start),int(watermark)-1000 if watermark else int(start))
-            finish=min(end,begin+7*86400000)
-            if begin>finish:continue
-            engine.book.funding(engine.broker.funding(symbol,begin,finish))
-            with engine.book.db:engine.book.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)',('funding_cursor:'+symbol,str(finish)))
-            if finish<end:raise Halt('Funding history catch-up is incomplete; resume only after review')
+        from .signal_follow import sync_funding
+        sync_funding(engine)
 
     def flatten_owned(self,engine,reason):
         for position in list(engine.book.positions()):
@@ -251,28 +298,22 @@ class DemoSession:
                 self.entries_enabled=False;self.flatten_owned(engine,'Cumulative limit: closing owned demo positions')
                 raise
         source=self.source.inspect()
-        if not source['fresh']:raise Halt('Public source became stale; demo following stopped, confirmed exchange stops remain')
         while not self.commands.empty():
             if self.stop_event.is_set():return
             command=self.commands.get_nowait()
             if command['kind']=='flatten_owned':self.flatten_owned(engine,'User requested owned demo exit');continue
             action=command['action'];symbol=command['symbol']
+            if action.startswith('OPEN') and not source['fresh']:
+                self.log('Rehearsal entry skipped while public source is stale');continue
             if action.startswith('OPEN') and not self.entries_enabled:
                 self.log('Rehearsal entry skipped while entries are paused');continue
-            bid,ask=engine.broker.quote(symbol)
-            event=dict(id='demo-rehearsal-'+uuid.uuid4().hex,symbol=symbol,action=action,source_time=now(),price=str(ask if action=='OPEN_LONG' else bid))
+            price='1'
+            if action.startswith('OPEN'):
+                bid,ask=engine.broker.quote(symbol);price=str(ask if action=='OPEN_LONG' else bid)
+            event=dict(id='demo-rehearsal-'+uuid.uuid4().hex,symbol=symbol,action=action,source_time=now(),price=price)
             result=engine.handle(event);self.log('Explicit demo rehearsal',origin='rehearsal',symbol=symbol,action=action,result=result['state'],reason=result.get('reason'))
-        for row in self.source.events(self.cursor):
-            if self.stop_event.is_set():return
-            if row['status']=='observed':
-                if row['action'].startswith('OPEN') and not self.entries_enabled:
-                    self.log('Public entry skipped while entries are paused',event_id=row['id'])
-                else:
-                    event=dict(id='aoying:'+row['source_id'],action=row['action'],symbol=row['symbol'],source_time=row['source_time'],price=row['source_price'])
-                    result=engine.handle(event);self.log('Public operation processed on demo',origin='public',symbol=row['symbol'],action=row['action'],result=result['state'],reason=result.get('reason'),event_id=row['id'])
-            self.cursor=row['id']
-            with engine.book.db:engine.book.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)',('source_cursor',str(self.cursor)))
-        with self.lock:self.last_tick=now()
+        from .signal_follow import process_public
+        process_public(self,engine,source)
 
     def run(self):
         engine=None
@@ -280,21 +321,27 @@ class DemoSession:
             with execution_lease(self.data.parent/'demo-v2.lock'),self.io_lock:
                 broker=self.broker or self.factory();self.require_demo(broker)
                 if hasattr(broker,'sync'):broker.sync()
-                engine=StrategyEngine(self.journal,self.policy,broker)
+                prepare=self.scope_config.get('prepare_demo_leverage') is True
+                engine=StrategyEngine(self.journal,self.policy,broker,prepare_demo_leverage=prepare)
                 engine.recover();account=engine.check_account()
                 if not account.get('can_trade'):raise Halt('Demo account does not permit trading')
-                for symbol in self.policy.symbols:
-                    if int(broker.symbol_config(symbol)['leverage'])!=self.policy.leverage(symbol):
-                        raise Halt('Set the matching leverage manually on the demo exchange for '+symbol)
-                    broker.rules(symbol)
+                if not prepare:
+                    for symbol in self.policy.symbols:
+                        if int(broker.symbol_config(symbol)['leverage'])!=self.policy.leverage(symbol):
+                            raise Halt('Set the matching leverage manually on the demo exchange for '+symbol)
+                        broker.rules(symbol)
+                elif not all(hasattr(broker,m) for m in ('symbol_class','prepare_leverage')):
+                    raise Halt('The broker cannot prepare approved Demo contracts')
                 source=self.source.inspect()
-                if not source['fresh']:raise Halt('Public source is not fresh at demo startup')
+                if not source['fresh'] and not (source.get('watching') and source.get('status') in ('running','retrying')):
+                    raise Halt('Public source is inactive at demo startup')
                 # Do not guess what happened while stopped. Existing owned demo
                 # positions require manual inspection/exit; never replay opens.
                 if engine.book.positions():raise Halt('Recovered owned demo position: inspect its confirmed stop and manage it on the demo exchange before starting a new follow session')
                 self.cursor=source['latest_id']
                 with engine.book.db:engine.book.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)',('source_cursor',str(self.cursor)))
                 with self.lock:self.broker,self.account,self.account_updated,self.phase=broker,account,now(),'running'
+                self.source_waiting=not source['fresh']
                 self.log('Demo following explicitly started; current history baselined, no old opening replay')
                 next_maintenance=next_funding=0
                 while not self.stop_event.is_set():

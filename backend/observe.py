@@ -15,7 +15,7 @@ import urllib.request
 import uuid
 
 from .core import Store,Invalid,now,validate_url
-from .feeds import PublicCollector
+from .feeds import PublicCollector,PublicResponseUnavailable
 from .paths import default_data_dir
 
 AOYING_URL='https://www.binance.com/zh-CN/copy-trading/lead-details/5075281354358777856'
@@ -82,10 +82,17 @@ class SignalObserver:
                 raise Invalid('Another observer already owns this trader')
             if db.execute('SELECT 1 FROM positions WHERE trader_id=?',(self.trader_id,)).fetchone():
                 raise Invalid('Close this trader\'s paper positions before enabling observation')
+            # A verified transient failure may reconnect to its existing public
+            # history. Do not turn intervening closes into a new historical
+            # baseline while an execution workspace is still following it.
+            # Manual stops/pauses and a never-initialized observer still baseline.
+            self.initialized=bool(old.get('status')=='error' and old.get('restartable') is True
+                and db.execute("SELECT 1 FROM events WHERE trader_id=? AND source_id LIKE 'public:%' LIMIT 1",
+                               (self.trader_id,)).fetchone())
             self.meta=dict(mode='observe',status='starting',owner=self.owner,pid=os.getpid(),
                            heartbeat=time.time(),started_at=now(),last_poll=None,last_error='',
                            baseline_count=old.get('baseline_count',0),new_count=old.get('new_count',0),polls=0,timezone='UTC',
-                           portfolio_id='5075281354358777856',interval_seconds=15)
+                           portfolio_id='5075281354358777856',interval_seconds=15,resumed_cursor=self.initialized)
             db.execute('UPDATE traders SET signal_monitor=?,enabled=1 WHERE id=?',
                        (json.dumps(self.meta),self.trader_id))
             if old.get('status')=='paused':
@@ -170,7 +177,7 @@ class SignalObserver:
     def recover_crashed_browser(self,error):
         # A crashed/closed browser cannot recover by retrying the same page.
         # Preserve the observation cursor; never reset rate limits or access denials.
-        if type(error).__name__!='TargetClosedError' and 'Page crashed' not in str(error):
+        if not isinstance(error,PublicResponseUnavailable) and type(error).__name__!='TargetClosedError' and 'Page crashed' not in str(error):
             return False
         if self.collector:
             failed=self.collector

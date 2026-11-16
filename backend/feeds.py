@@ -46,6 +46,10 @@ def parse_public(text, year, offset):
     return output
 
 
+class PublicResponseUnavailable(ConnectionError):
+    """A transient browser response-body lifetime failure, not an access denial."""
+
+
 class PublicCollector:
     def __init__(self, url, offset, *, timezone_id=None, expected_name=None):
         from playwright.sync_api import sync_playwright
@@ -70,28 +74,48 @@ class PublicCollector:
 
     def fetch(self, known):
         portfolio=urllib.parse.urlsplit(self.url).path.rstrip('/').rsplit('/',1)[-1]
-        started=set();operations=[]
+        started=set();captures=[]
         def remember_request(request):started.add(request)
-        def remember_response(response):
-            if response.request in started and self.matches_public_response(response,'order-history',portfolio):
-                operations.append(response)
+        def remember_finished(request):
+            if request not in started:return
+            response=request.response()
+            if response is None:return
+            for kind in ('detail','order-history'):
+                if self.matches_public_response(response,kind,portfolio):
+                    # Read the completed body now. Keeping a Response object until
+                    # after page hydration/load may lose its CDP resource body.
+                    try:self.verify_operation_response(response);error=None
+                    except Exception as exc:error=exc
+                    captures.append((kind,error))
+                    break
         # The site may restore the active tab and fetch before our click. Keep
         # responses from requests started during this navigation, not old pages.
         self.page.on('request',remember_request)
-        self.page.on('response',remember_response)
-        try:return self._fetch_page(known,portfolio,operations)
+        self.page.on('requestfinished',remember_finished)
+        try:return self._fetch_page(known,portfolio,captures)
         finally:
             self.page.remove_listener('request',remember_request)
-            self.page.remove_listener('response',remember_response)
+            self.page.remove_listener('requestfinished',remember_finished)
 
-    def _fetch_page(self,known,portfolio,operations):
+    def wait_for_verified_response(self,captures,kind,timeout=15):
+        from playwright.sync_api import TimeoutError as BrowserTimeout
+        deadline=time.monotonic()+timeout
+        while True:
+            match=next((item for item in captures if item[0]==kind),None)
+            if match:
+                if match[1] is not None:raise match[1]
+                return
+            if time.monotonic()>=deadline:
+                raise BrowserTimeout('No verified '+kind+' response for this navigation')
+            self.page.wait_for_timeout(100)
+
+    def _fetch_page(self,known,portfolio,captures):
         # The SSR heading exists before React knows the portfolio ID. Waiting
         # only for the heading can submit portfolioId="" and display no records.
-        with self.page.expect_response(lambda r:self.matches_public_response(r,'detail',portfolio),timeout=20000) as detail:
-            response=self.page.goto(self.url, wait_until='domcontentloaded', timeout=35000)
-            if response and response.status in (401,403,418,429):
-                raise Invalid('Public page access restricted or rate limited; observation paused')
-        self.verify_operation_response(detail.value)
+        response=self.page.goto(self.url, wait_until='domcontentloaded', timeout=35000)
+        if response and response.status in (401,403,418,429):
+            raise Invalid('Public page access restricted or rate limited; observation paused')
+        self.wait_for_verified_response(captures,'detail',20)
         if self.expected_name:
             self.page.get_by_role('heading',name=self.expected_name,exact=True).wait_for(timeout=15000)
         self.page.wait_for_load_state('load',timeout=20000)
@@ -102,13 +126,11 @@ class PublicCollector:
         from playwright.sync_api import TimeoutError as BrowserTimeout
         for attempt in range(2):
             tab.click(timeout=15000)
-            deadline=time.monotonic()+15
-            while not operations and time.monotonic()<deadline:self.page.wait_for_timeout(100)
-            if operations:break
-            if attempt:raise BrowserTimeout('No verified operation request for this navigation')
+            try:self.wait_for_verified_response(captures,'order-history')
+            except BrowserTimeout:
+                if attempt:raise
+            else:break
             self.page.wait_for_timeout(2000)
-        operation_response=operations[0]
-        self.verify_operation_response(operation_response)
         panel = self.page.get_by_role('tabpanel', name='最新操作记录', exact=True)
         panel.wait_for(timeout=15000)
         # The date and clock may be separate spans; match the complete panel text.
@@ -155,10 +177,19 @@ class PublicCollector:
             raise ConnectionError('Public operation service is temporarily unavailable')
         if response.status!=200:
             raise Invalid('Unexpected public operation response; observation paused')
-        payload=response.json()
+        try:payload=response.json()
+        except Exception as exc:
+            if ('Network.getResponseBody' in str(exc) and any(message in str(exc) for message in
+                    ('No resource with given identifier found','No data found for resource with given identifier'))):
+                raise PublicResponseUnavailable('Public response body expired; browser connection will be rebuilt') from None
+            if isinstance(exc,ValueError):
+                raise Invalid('Public operation response was not valid JSON; observation paused') from None
+            raise
         if not isinstance(payload,dict) or payload.get('success') is not True or payload.get('code')!='000000':
             code=str(payload.get('code','unknown')) if isinstance(payload,dict) else 'invalid_json'
             code=re.sub(r'[^A-Za-z0-9_-]','',code)[:40]
+            if code=='11012005':
+                raise ConnectionError('Public operation service is busy (public code 11012005); retrying with backoff')
             message=re.sub(r'\s+',' ',str(payload.get('message') or ''))[:160] if isinstance(payload,dict) else ''
             raise Invalid('Public operation request was not successful (public code '+code+'): '+message+'; observation paused')
 

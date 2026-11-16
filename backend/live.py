@@ -20,6 +20,7 @@ from .executor import Binance,Engine,Halt,APIError,quantize,D
 
 
 class TradeClient(Binance):
+    handles_timestamp_retry=True
     def __init__(self,key=None,secret=None,environment=None):
         self.live=True
         self.key=key if key is not None else os.environ.get('POLO_BINANCE_API_KEY','')
@@ -34,14 +35,33 @@ class TradeClient(Binance):
         self.opener=urllib.request.build_opener(NoRedirect())
         self.offset=0
         self.blocked_until=0
+        self.clock_lock=threading.RLock()
+        self.clock_anchor=None
+        self.clock_info={}
 
     def request(self,method,path,params=None,signed=False):
+        try:return self._request_once(method,path,params,signed)
+        except APIError as exc:
+            # Correct a rejected signed read once, including reads inside account().
+            # Never replay a submission or cancellation here.
+            if not signed or method!='GET' or exc.code!=-1021:raise
+            self.sync()
+            return self._request_once(method,path,params,signed)
+
+    def signing_timestamp(self):
+        with self.clock_lock:
+            if self.clock_anchor is None or not 0<=time.monotonic()-self.clock_anchor[1]<60:
+                self.sync()
+            server,received=self.clock_anchor
+            return int(server+(time.monotonic()-received)*1000-250)
+
+    def _request_once(self,method,path,params=None,signed=False):
         if time.monotonic()<self.blocked_until:
             raise Halt('币安请求受限，等待后再重试；不会绕过访问限制。')
         params=dict(params or {})
         headers={}
         if signed:
-            params.update(timestamp=int(time.time()*1000+self.offset),recvWindow=5000)
+            params.update(timestamp=self.signing_timestamp(),recvWindow=5000)
             headers['X-MBX-APIKEY']=self.key
         query=urllib.parse.urlencode(params)
         if signed:
@@ -69,9 +89,23 @@ class TradeClient(Binance):
             raise Halt('网络请求失败或超时。下单结果需查单确认；不会直接重发。') from None
 
     def sync(self):
-        before=time.time()*1000
-        server=self.request('GET','/fapi/v1/time')['serverTime']
-        self.offset=int(server-(before+time.time()*1000)/2)
+        with self.clock_lock:
+            for _ in range(3):
+                before=time.monotonic()
+                server=self.request('GET','/fapi/v1/time')['serverTime']
+                received=time.monotonic();rtt=(received-before)*1000
+                if type(server) is not int or server<=0:
+                    raise Halt('Exchange clock response is invalid')
+                if not 0<=rtt<=2000:continue
+                # Anchor at receipt, without guessing the network's asymmetry.
+                # A 250ms safety margin avoids signing ahead of the exchange.
+                # Monotonic elapsed time ignores Windows wall-clock adjustments.
+                self.clock_anchor=(server,received)
+                self.offset=int(server-time.time()*1000)
+                self.clock_info=dict(rtt_ms=round(rtt),offset_ms=self.offset,updated=now())
+                return
+            self.clock_anchor=None
+            raise Halt('Exchange clock samples were too slow; signed requests paused')
 
     def account(self):
         config=self.request('GET','/fapi/v1/accountConfig',signed=True)

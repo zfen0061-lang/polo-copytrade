@@ -9,7 +9,7 @@ import urllib.request
 import urllib.error
 import webbrowser
 from pathlib import Path
-from .credential_store import validate_pair
+from .credential_store import validate_pair,DemoCredentialVault
 from .paths import default_data_dir
 
 
@@ -20,6 +20,7 @@ def main(argv=None):
     parser.add_argument('--source-data',type=Path,default=default_data_dir()/'studio.sqlite3')
     parser.add_argument('--no-browser',action='store_true')
     parser.add_argument('--replace',action='store_true',help='Replace a stopped Demo session credential pair through its local pipe')
+    parser.add_argument('--remember',action='store_true',help='Remember Demo keys with separate Windows user encryption')
     args=parser.parse_args(argv)
     if args.data.resolve().parent==args.source_data.resolve().parent:
         raise SystemExit('Demo data directory must be separate from the real read-only monitor')
@@ -35,7 +36,9 @@ def main(argv=None):
         expected=hashlib.sha256(os.path.normcase(str(args.data.resolve())).encode()).hexdigest()[:16]
         if existing.get('workspace_id')!=expected:raise SystemExit('The running Demo workspace uses a different data directory; no credentials were sent')
     except (urllib.error.URLError,TimeoutError):pass
-    if existing and (args.preview or (existing.get('configured') and not args.replace)):
+    vault=DemoCredentialVault(args.data)
+    needs_remember=args.remember and not vault.exists()
+    if existing and (args.preview or (existing.get('configured') and not args.replace and not needs_remember)):
         print('The Demo workspace is already running. Use its page; no new key input is needed.')
         if not args.no_browser:webbrowser.open('http://127.0.0.1:8766')
         return
@@ -49,9 +52,18 @@ def main(argv=None):
         key=getpass.getpass('Demo API Key (hidden): ').strip()
         secret=getpass.getpass('Demo API Secret (hidden): ').strip()
         validate_pair(key,secret)
+        if args.remember:
+            from .live import TradeClient
+            from .demo_broker import DemoBroker
+            client=TradeClient(key=key,secret=secret,environment='testnet');client.sync()
+            DemoBroker(client).account()
+            vault.save(key,secret)
+            print('Demo connection verified and saved with Windows user encryption. No orders placed.')
         if existing:
             from .supervisor import control_request
-            result=control_request(args.data,dict(command='credentials',key=key,secret=secret))
+            payload=dict(command='credentials',key=key,secret=secret)
+            if args.remember:payload['remember']=True
+            result=control_request(args.data,payload)
             key=secret=None
             if not result.get('accepted'):raise SystemExit(result.get('error','Demo credential handoff failed'))
             print('Demo credentials delivered locally. Verify the account and explicitly start in the Demo page.')

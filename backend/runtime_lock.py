@@ -6,11 +6,11 @@ def execution_lease(path):
     """Prevent two local server instances from operating the same live data directory."""
     import os
     handle=open(path,'a+b')
-    handle.seek(0)
-    if handle.read(1)==b'':
-        handle.write(b'0');handle.flush()
-    handle.seek(0)
     try:
+        handle.seek(0)
+        if handle.read(1)==b'':
+            handle.write(b'0');handle.flush()
+        handle.seek(0)
         if os.name=='nt':
             import msvcrt
             msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)

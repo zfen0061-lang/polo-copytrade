@@ -11,14 +11,15 @@
 </div>
 <div class="demo-columns"><section class="card"><div class="section-head"><h2>测试参数</h2><span id="demo-policy-state" class="pill subtle">未保存</span></div>
 <form id="demo-policy"><div class="form-grid">
+<label class="span-two">传统资产合约（指数、商品，沿用股票类杠杆）<input name="traditional_symbols" placeholder="由 Demo 合约目录分类"></label>
 <label>初始策略预算 / USDT<input name="initial_capital" type="number" value="60" min="0.01" step="0.01" required></label>
 <label>累计亏损或回撤金额 / USDT<input name="max_loss" type="number" value="60" min="0.01" step="0.01" required></label>
 <label class="span-two">累计亏损计算方式<select name="loss_basis" required><option value="">请明确选择，不自动代选</option><option value="initial_net_loss">相对初始本金的净亏损</option><option value="peak_drawdown">相对策略净值最高点的回撤</option></select></label>
 <label>加密货币杠杆（上限 10）<input name="crypto_leverage" type="number" value="10" min="1" max="10" step="1" required></label>
 <label>股票类合约杠杆（上限 5）<input name="equity_leverage" type="number" value="3" min="1" max="5" step="1" required></label>
 <label>保证金亏损止损目标 / %<input name="margin_stop_percent" type="number" value="40" min="0.01" max="99" step="0.01" required></label>
-<label>最大不利入场价差 / %<input name="deviation_percent" type="number" value="3" min="0.01" max="99" step="0.01" required></label>
-<label>新开仓信号有效期 / 秒<input name="max_signal_age" type="number" value="60" min="1" max="3600" step="1" required></label>
+<label>开仓允许绝对价差（正负）/ %<input name="deviation_percent" type="number" value="3" min="0.01" max="99" step="0.01" required></label>
+<label>首次检测后处理时限 / 秒<input name="max_signal_age" type="number" value="60" min="1" max="3600" step="1" required></label>
 <label>加密货币合约（逗号分隔）<input name="crypto_symbols" value="BTCUSDT, ETHUSDT, ZECUSDT" required></label>
 <label class="span-two">股票类合约（逗号分隔，可留空）<input name="equity_symbols" placeholder="例如 NVDAUSDT；需 Demo 实际支持"></label>
 </div><p class="small muted">止损目标按保证金比例、在费用前估算；成交价格仍可能受跳空和滑点影响。60 USDT 是策略预算，并未划转或隔离交易所账户资金。</p>
@@ -34,6 +35,7 @@
 <button id="demo-flatten" class="ghost danger" disabled>平掉本程序的 Demo 仓位</button>
 <p class="small muted">此测试会话不自动恢复下单。若重启后账本仍有持仓，程序会核对保护单并要求你在 Demo 交易所处理后再启动新跟随。</p>
 </section></div>
+<section class="card"><h2>后台止损复测 · Demo only</h2><p class="small muted">使用 20 USDT 虚拟测试额度、10 倍杠杆和临时 1% 保证金止损；等待最多 180 秒，随后核对成交或尝试平仓清理。不会修改策略的 40% 止损草案，也不会自动启动跟随。</p><p id="demo-verification-state" class="callout small">尚未运行后台止损检查。</p><button id="demo-verify" class="secondary" disabled>运行 Demo 止损检查</button><p class="small muted">首次请在本机运行 remember-demo.cmd，验证并加密保存独立的 Demo 连接。之后复测可复用连接，密钥不会经过网页。</p></section>
 <section class="card"><h2>本程序管理的 Demo 仓位</h2><div class="table-wrap"><table><thead><tr><th>合约 / 方向</th><th>数量</th><th>成交均价</th><th>杠杆</th><th>来源</th></tr></thead><tbody id="demo-positions"></tbody></table></div></section>
 <section class="card"><h2>执行与查单日志</h2><p class="small muted">响应不确定的订单会按固定客户订单编号查单，不盲目重发。测试通过需结合 Demo 交易所实际订单、成交和止损核对。</p><div id="demo-logs"></div></section>
 <footer>Endpoint: https://demo-fapi.binance.com · 真实账户执行关闭 · Polo CopyTrade</footer>

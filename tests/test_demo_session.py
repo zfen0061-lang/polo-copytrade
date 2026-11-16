@@ -1,4 +1,4 @@
-from datetime import datetime,timezone
+from datetime import datetime,timezone,timedelta
 import json
 from pathlib import Path
 import sqlite3
@@ -98,8 +98,46 @@ class DemoSessionTests(unittest.TestCase):
     def test_stale_source_stops_new_orders(self):
         engine=self.activate_engine();self.event('queued')
         self.set_source(dict(self.monitor,status='retrying'))
-        with self.assertRaisesRegex(Halt,'stale'):self.session.tick(engine)
+        self.session.tick(engine)
+        self.assertTrue(self.session.source_waiting)
         self.assertEqual(self.broker.submit_count,0)
+
+    def test_recorded_close_during_source_gap_is_executed_once(self):
+        engine=self.activate_engine();self.event('protected-before-disconnect')
+        self.session.tick(engine)
+        self.assertEqual(len(self.broker.open_stops('BTCUSDT')),1)
+        self.set_source(dict(self.monitor,status='retrying'))
+        self.event('close-during-source-disconnect','CLOSE_LONG')
+        self.session.tick(engine)
+        self.assertTrue(self.session.source_waiting)
+        self.assertEqual(self.broker.submit_count,2)
+        self.assertEqual(engine.book.positions(),[])
+        self.assertEqual(self.broker.open_stops('BTCUSDT'),[])
+        self.set_source(dict(self.monitor,heartbeat=time.time(),last_poll=now()))
+        self.session.tick(engine);self.session.tick(engine)
+        self.assertFalse(self.session.source_waiting)
+        self.assertEqual(self.broker.submit_count,2)
+        self.assertEqual(engine.book.positions(),[])
+        self.assertEqual(self.broker.open_stops('BTCUSDT'),[])
+
+    def test_detected_old_execution_is_eligible_and_price_check_is_logged(self):
+        engine=self.activate_engine();self.event('late-published')
+        with self.source.db() as db:
+            db.execute('UPDATE events SET source_time=?',((datetime.now(timezone.utc)-timedelta(minutes=5)).isoformat(),))
+        self.session.tick(engine)
+        self.assertEqual(self.broker.submit_count,1)
+        operation=next(l for l in self.session.logs if l.get('origin')=='public')
+        self.assertEqual(operation['price_check']['absolute_percent'],'0')
+
+    def test_open_already_closed_in_same_batch_is_not_chased(self):
+        engine=self.activate_engine();self.event('finished-open');self.event('finished-close','CLOSE_LONG')
+        self.session.tick(engine)
+        self.assertEqual(self.broker.submit_count,0)
+        skipped=engine.book.db.execute("SELECT result FROM intents WHERE id='aoying:public:finished-open'").fetchone()
+        self.assertEqual(json.loads(skipped[0])['reason'],'superseded_by_close')
+        self.event('new-cycle')
+        self.session.tick(engine)
+        self.assertEqual(self.broker.submit_count,1)
 
     def test_start_baselines_old_openings_and_never_adopts_manual_positions(self):
         self.event('old')
@@ -112,6 +150,16 @@ class DemoSessionTests(unittest.TestCase):
         self.session.start('START DEMO');self.session.thread.join(2)
         self.assertEqual(self.session.phase,'error');self.assertIn('Unowned',self.session.error)
         self.assertEqual(self.broker.submit_count,0)
+
+    def test_start_with_active_retrying_source_waits_without_opening(self):
+        self.set_source(dict(self.monitor,status='retrying'))
+        self.session.inspect();self.session.start('START DEMO')
+        deadline=time.monotonic()+2
+        while self.session.phase=='starting' and time.monotonic()<deadline:time.sleep(.01)
+        self.assertEqual(self.session.phase,'running')
+        self.assertTrue(self.session.source_waiting)
+        self.assertEqual(self.broker.submit_count,0)
+        self.session.stop();self.session.thread.join(2)
 
     def test_configuration_cannot_silently_reset_an_active_capital_journal(self):
         engine=self.activate_engine();self.event('configured');self.session.tick(engine)

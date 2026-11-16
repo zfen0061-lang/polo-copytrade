@@ -30,13 +30,14 @@ def validate_pair(key,secret):
 
 
 class WindowsUserProtection:
+    def __init__(self,entropy=ENTROPY):self.entropy=entropy
     def transform(self,data,decrypt=False):
         if os.name!='nt':raise Invalid('Encrypted connection storage requires Windows')
         class Blob(ctypes.Structure):
             _fields_=[('size',wintypes.DWORD),('data',ctypes.POINTER(ctypes.c_ubyte))]
-        source=ctypes.create_string_buffer(data);entropy=ctypes.create_string_buffer(ENTROPY)
+        source=ctypes.create_string_buffer(data);entropy=ctypes.create_string_buffer(self.entropy)
         incoming=Blob(len(data),ctypes.cast(source,ctypes.POINTER(ctypes.c_ubyte)))
-        extra=Blob(len(ENTROPY),ctypes.cast(entropy,ctypes.POINTER(ctypes.c_ubyte)));outgoing=Blob()
+        extra=Blob(len(self.entropy),ctypes.cast(entropy,ctypes.POINTER(ctypes.c_ubyte)));outgoing=Blob()
         crypto=ctypes.WinDLL('crypt32',use_last_error=True);kernel=ctypes.WinDLL('kernel32',use_last_error=True)
         function=crypto.CryptUnprotectData if decrypt else crypto.CryptProtectData
         function.argtypes=[ctypes.POINTER(Blob),ctypes.c_void_p,ctypes.POINTER(Blob),ctypes.c_void_p,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(Blob)]
@@ -55,19 +56,20 @@ class WindowsUserProtection:
 
 
 class CredentialVault:
+    filename='account-readonly.dpapi';magic=MAGIC;environment='production';entropy=ENTROPY
     def __init__(self,data,protection=None):
-        self.path=Path(data).resolve().parent/'account-readonly.dpapi'
-        self.protection=protection or WindowsUserProtection()
+        self.path=Path(data).resolve().parent/self.filename
+        self.protection=protection or WindowsUserProtection(self.entropy)
     def exists(self):return self.path.is_file()
     def save(self,key,secret):
         validate_pair(key,secret)
-        raw=json.dumps(dict(version=1,environment='production',key=key,secret=secret)).encode()
+        raw=json.dumps(dict(version=1,environment=self.environment,key=key,secret=secret)).encode()
         encrypted=self.protection.protect(raw)
         if self.protection.unprotect(encrypted)!=raw:raise Invalid('Encrypted connection verification failed')
         self.path.parent.mkdir(parents=True,exist_ok=True);temporary=None
         try:
             with tempfile.NamedTemporaryFile(dir=self.path.parent,prefix='credential-',suffix='.tmp',delete=False) as output:
-                temporary=Path(output.name);output.write(MAGIC+encrypted);output.flush();os.fsync(output.fileno())
+                temporary=Path(output.name);output.write(self.magic+encrypted);output.flush();os.fsync(output.fileno())
             temporary.replace(self.path)
         finally:
             if temporary and temporary.exists():temporary.unlink()
@@ -76,13 +78,29 @@ class CredentialVault:
         try:
             if self.path.stat().st_size>65536:raise ValueError()
             protected=self.path.read_bytes()
-            if not protected.startswith(MAGIC):raise ValueError()
-            value=json.loads(self.protection.unprotect(protected[len(MAGIC):]))
-            if value.get('version')!=1 or value.get('environment')!='production':raise ValueError()
+            if not protected.startswith(self.magic):raise ValueError()
+            value=json.loads(self.protection.unprotect(protected[len(self.magic):]))
+            if value.get('version')!=1 or value.get('environment')!=self.environment:raise ValueError()
             return validate_pair(value.get('key'),value.get('secret'))
         except (OSError,ValueError,TypeError,AttributeError,Invalid):
             raise Invalid('Saved connection could not be unlocked; reconnect locally under the original Windows user') from None
     def forget(self):self.path.unlink(missing_ok=True)
+
+
+class DemoCredentialVault(CredentialVault):
+    """Separate current-Windows-user encryption; never falls back to real keys."""
+    filename='demo-account.dpapi'
+    magic=b'POLO-FUTURES-DEMO-DPAPI-V1\x00'
+    environment='testnet'
+    entropy=b'PoloCopyTrade/futures-demo/credentials/v1'
+
+
+class TradingCredentialVault(CredentialVault):
+    """Dedicated production trading connection; never falls back to main/Demo keys."""
+    filename='account-trading.dpapi'
+    magic=b'POLO-PRODUCTION-TRADING-DPAPI-V1\x00'
+    environment='production'
+    entropy=b'PoloCopyTrade/production/dedicated-trading/credentials/v1'
 
 
 def migrate_pending_session(data):

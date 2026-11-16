@@ -7,9 +7,23 @@ import tempfile
 import unittest
 from unittest.mock import Mock,patch
 from backend.demo_connect import main
+from backend.credential_store import DemoCredentialVault
+from tests.test_credential_store import FakeProtection
 
 
 class DemoConnectTests(unittest.TestCase):
+    def test_remembered_demo_is_verified_before_saving_and_private_handoff(self):
+        protection=FakeProtection()
+        with patch('urllib.request.build_opener',return_value=self.opener()), \
+                patch('getpass.getpass',side_effect=['fake-demo-key','fake-demo-secret']), \
+                patch('backend.live.TradeClient') as client,patch('backend.demo_broker.DemoBroker') as broker, \
+                patch('backend.credential_store.WindowsUserProtection',return_value=protection), \
+                patch('backend.supervisor.control_request',return_value={'accepted':True}) as handoff:
+            main([*self.options,'--remember'])
+        client.assert_called_once_with(key='fake-demo-key',secret='fake-demo-secret',environment='testnet')
+        broker.return_value.account.assert_called_once()
+        self.assertEqual(DemoCredentialVault(self.data,protection).load(),('fake-demo-key','fake-demo-secret'))
+        self.assertTrue(handoff.call_args.args[1]['remember'])
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.data=self.root/'demo/state.db';self.source=self.root/'source/state.db'

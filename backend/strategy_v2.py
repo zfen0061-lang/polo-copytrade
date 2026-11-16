@@ -1,7 +1,4 @@
-"""Version-two strategy accounting and testnet execution.
-
-All order-producing entry points require a demo-futures broker. Production stays locked.
-"""
+"""Shared strategy accounting. Concrete engines enforce separate endpoint gates."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +11,7 @@ import time
 
 from .core import Invalid,dec
 from .executor import Halt,APIError,quantize
+from .futures_broker import WriteBlocked,EntrySkipped
 
 ZERO=dec('0')
 TERMINAL={'FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'}
@@ -50,8 +48,8 @@ class StrategyPolicy:
         if type(self.max_signal_age) is not int or not 1<=self.max_signal_age<=3600:
             raise Invalid('Choose an entry signal age from 1 to 3600 seconds')
         import re
-        if not self.symbols or len(self.symbols)>20 or any(
-                not re.fullmatch(r'[A-Z0-9_]{1,24}USDT',s) or kind not in ('crypto','equity')
+        if not self.symbols or len(self.symbols)>1000 or any(
+                not re.fullmatch(r'[A-Z0-9_]{1,24}USDT',s) or kind not in ('crypto','equity','traditional')
                 for s,kind in self.symbols.items()):
             raise Invalid('Explicit USDT crypto/equity symbol classification is required')
 
@@ -79,6 +77,7 @@ class CapitalBook:
           CREATE TABLE IF NOT EXISTS protection(symbol TEXT,side TEXT,client_id TEXT,params TEXT,
             PRIMARY KEY(symbol,side));
           CREATE TABLE IF NOT EXISTS retired_stops(client_id TEXT PRIMARY KEY,symbol TEXT,side TEXT);
+          CREATE TABLE IF NOT EXISTS protection_ack(client_id TEXT PRIMARY KEY,algo_id TEXT NOT NULL);
         ''')
         fingerprint=hashlib.sha256(json.dumps([identity,policy.public()],sort_keys=True).encode()).hexdigest()
         previous=self.get('fingerprint')
@@ -122,12 +121,22 @@ class CapitalBook:
                         (key,'funding',str(dec(item['income'])),'USDT',symbol,stamp))
 
 
-class StrategyEngine:
-    def __init__(self,path,policy,broker):
-        if broker.environment!='testnet' or broker.base!='https://demo-fapi.binance.com':
-            raise Halt('Version-two execution is locked to Binance Futures demo; production is disabled')
+class FuturesStrategyEngine:
+    def __init__(self,path,policy,broker,prepare_demo_leverage=False):
+        self.validate_broker(broker)
         self.policy,self.broker=policy,broker
+        if type(prepare_demo_leverage) is not bool:raise Halt('Demo leverage preparation must be explicit')
+        self.prepare_demo_leverage=prepare_demo_leverage
+        self.price_check=None
         self.book=CapitalBook(path,policy,broker.identity())
+
+    def validate_broker(self,broker):raise Halt('Choose an explicitly gated strategy engine')
+
+    def prepare_contract(self,symbol,leverage):
+        if int(self.broker.symbol_config(symbol)['leverage'])!=leverage:
+            self.broker.prepare_leverage(symbol,leverage)
+        if int(self.broker.symbol_config(symbol)['leverage'])!=leverage:
+            raise Halt('Leverage could not be read back after preparation')
 
     def close(self):self.book.db.close()
 
@@ -207,7 +216,12 @@ class StrategyEngine:
         if stamp.utcoffset() is None:raise Halt('Signal timezone is required')
         age=(datetime.now(timezone.utc)-stamp).total_seconds()
         if age < -5:raise Halt('Future signal timestamp')
-        if opening and age>self.policy.max_signal_age:return None,'entry_expired'
+        if opening:
+            detected=datetime.fromisoformat(event.get('detected_time') or event['source_time'])
+            if detected.utcoffset() is None:raise Halt('Detection timezone is required')
+            detection_age=(datetime.now(timezone.utc)-detected).total_seconds()
+            if detection_age < -5:raise Halt('Future detection timestamp')
+            if detection_age>self.policy.max_signal_age:return None,'entry_expired'
         account=self.check_account()
         owned=next((p for p in self.book.positions() if (p['symbol'],p['side'])==(symbol,position_side)),None)
         if not opening and not owned:return None,'no_matching_owned_position'
@@ -216,9 +230,13 @@ class StrategyEngine:
             self.risk_check(account)
             if self.book.positions():return None,'allocated_pool_in_use'
             if self.broker.open_orders(symbol) or self.broker.open_stops(symbol):raise Halt('Unowned orders exist')
-        leverage=self.policy.leverage(symbol)
-        if int(self.broker.symbol_config(symbol)['leverage'])!=leverage:
-            raise Halt('Symbol leverage differs from policy; configure it manually on the testnet')
+            if self.prepare_demo_leverage and self.broker.symbol_class(symbol)!=self.policy.symbols[symbol]:
+                return None,'symbol_not_tradeable_or_class_changed'
+        leverage=self.policy.leverage(symbol) if opening else owned['leverage']
+        if opening:
+            if self.prepare_demo_leverage:self.prepare_contract(symbol,leverage)
+            elif int(self.broker.symbol_config(symbol)['leverage'])!=leverage:
+                raise Halt('Symbol leverage differs from policy; configure it before execution')
         rules=self.broker.rules(symbol);lot=rules['LOT_SIZE'] if opening else rules.get('MARKET_LOT_SIZE',rules['LOT_SIZE'])
         client='pv2_'+hashlib.sha256(event['id'].encode()).hexdigest()[:28]
         params=dict(symbol=symbol,side=side,positionSide=position_side if account['hedge_mode'] else 'BOTH',
@@ -228,6 +246,12 @@ class StrategyEngine:
             if not 0<bid<=ask:raise Halt('Invalid quote')
             reference=dec(event['price']);deviation=dec(self.policy.max_deviation)
             if reference<=0:raise Halt('Invalid reference price')
+            quote=ask if side=='BUY' else bid
+            signed_deviation=(quote-reference)/reference
+            self.price_check=dict(reference_price=str(reference),executable_quote=str(quote),
+                signed_percent=str(signed_deviation*100),absolute_percent=str(abs(signed_deviation)*100),
+                source_delay_seconds=str(age),decision_time=datetime.now(timezone.utc).isoformat())
+            if abs(signed_deviation)>deviation:return None,'entry_deviation'
             limit=quantize(reference*(1+deviation if side=='BUY' else 1-deviation),rules['PRICE_FILTER']['tickSize'],up=side=='SELL')
             if (side=='BUY' and ask>limit) or (side=='SELL' and bid<limit):return None,'entry_deviation'
             fee=dec(self.broker.fee_rate(symbol))
@@ -249,7 +273,7 @@ class StrategyEngine:
             return None,'quantity_filter'
         params['quantity']=format(qty,'f')
         return dict(event=dict(event),params=params,position_side=position_side,opening=opening,
-                    leverage=leverage,submitted_ms=int(time.time()*1000)),None
+                    leverage=leverage,submitted_ms=int(time.time()*1000),price_check=self.price_check),None
 
     def settle(self,intent,response):
         if response.get('status') not in TERMINAL:raise Halt('Order is not terminal; query it before proceeding')
@@ -299,6 +323,10 @@ class StrategyEngine:
             self.book.db.execute('INSERT INTO intents VALUES (?,?,?,?,NULL)',
                 (key,params['newClientOrderId'],'submitting',json.dumps(intent)))
         try:response=self.broker.place(params)
+        except WriteBlocked as exc:
+            with self.book.db:self.book.db.execute('UPDATE intents SET state=?,result=? WHERE id=?',
+                ('skipped' if isinstance(exc,EntrySkipped) else 'rejected',json.dumps(dict(reason=str(exc))),key))
+            raise
         except Exception:
             with self.book.db:self.book.db.execute('UPDATE intents SET state=? WHERE id=?',('uncertain',key))
             try:response=self.broker.query(params['symbol'],params['newClientOrderId'])
@@ -319,14 +347,51 @@ class StrategyEngine:
             self.protect(symbol,side,'recovery-'+str(owned.get((symbol,side),{}).get('opened_ms',0)))
         self.cleanup_retired_stops()
 
+    def query_protection(self,client):
+        saved=self.book.db.execute('SELECT algo_id FROM protection_ack WHERE client_id=?',(client,)).fetchone()
+        for attempt in range(3):
+            try:
+                state=(self.broker.query_stop_id(saved['algo_id']) if saved and hasattr(self.broker,'query_stop_id')
+                       else self.broker.query_stop(client))
+                if state.get('clientAlgoId',client)!=client:
+                    raise Halt('Stop acknowledgement identity does not match its durable intent')
+                return state
+            except APIError as exc:
+                if exc.code!=-2013 or attempt==2:raise
+                time.sleep(.25*(attempt+1))
+
+    def cancel_protection(self,client):
+        saved=self.book.db.execute('SELECT algo_id FROM protection_ack WHERE client_id=?',(client,)).fetchone()
+        if saved and hasattr(self.broker,'cancel_stop_id'):return self.broker.cancel_stop_id(saved['algo_id'])
+        return self.broker.cancel_stop(client)
+
+    def confirm_stop_canceled(self,client):
+        """Query after a single cancel; tolerate a lost reply or delayed status.
+
+        Never forget an unresolved protection id, and never treat a triggered
+        stop as canceled: its actual fill still requires reconciliation.
+        """
+        terminal={'CANCELED','FINISHED','EXPIRED'}
+        status=self.query_protection(client)
+        if status.get('algoStatus') in terminal:return
+        if status.get('algoStatus')!='NEW':
+            raise Halt('Stop cancellation is not confirmed; status='+str(status.get('algoStatus')))
+        cancel_error=None
+        try:self.cancel_protection(client)
+        except Exception as exc:cancel_error=exc
+        for attempt in range(3):
+            try:
+                status=self.query_protection(client)
+                if status.get('algoStatus') in terminal:return
+            except Exception as exc:cancel_error=exc
+            if attempt<2:time.sleep(.25*(attempt+1))
+        detail=(str(cancel_error) if isinstance(cancel_error,(Halt,APIError,Invalid))
+                else type(cancel_error).__name__) if cancel_error else 'status='+str(status.get('algoStatus'))
+        raise Halt('Stop cancellation is not confirmed; '+detail)
+
     def cleanup_retired_stops(self):
         for row in self.book.db.execute('SELECT * FROM retired_stops').fetchall():
-            status=self.broker.query_stop(row['client_id'])
-            if status.get('algoStatus')=='NEW':
-                self.broker.cancel_stop(row['client_id'])
-                status=self.broker.query_stop(row['client_id'])
-            if status.get('algoStatus') not in ('CANCELED','FINISHED','EXPIRED'):
-                raise Halt('Retired stop cancellation is not confirmed')
+            self.confirm_stop_canceled(row['client_id'])
             with self.book.db:self.book.db.execute('DELETE FROM retired_stops WHERE client_id=?',(row['client_id'],))
 
     def reconcile_stops(self):
@@ -336,7 +401,7 @@ class StrategyEngine:
             if actual.get((symbol,side),(ZERO,None))[0]==dec(position['qty']):continue
             stored=self.book.db.execute('SELECT * FROM protection WHERE symbol=? AND side=?',(symbol,side)).fetchone()
             if not stored:raise Halt('Position changed without a known exchange stop')
-            state=self.broker.query_stop(stored['client_id'])
+            state=self.query_protection(stored['client_id'])
             if state.get('algoStatus') not in ('FINISHED','TRIGGERED') or not state.get('actualOrderId'):
                 raise Halt('Position change is not a verified stop fill; manual review required')
             response=self.broker.query_order_id(symbol,state['actualOrderId'])
@@ -354,12 +419,7 @@ class StrategyEngine:
         old=self.book.db.execute('SELECT * FROM protection WHERE symbol=? AND side=?',(symbol,side)).fetchone()
         if not position:
             if old:
-                state=self.broker.query_stop(old['client_id'])
-                if state.get('algoStatus')=='NEW':
-                    self.broker.cancel_stop(old['client_id'])
-                    state=self.broker.query_stop(old['client_id'])
-                if state.get('algoStatus') not in ('CANCELED','FINISHED','EXPIRED'):
-                    raise Halt('Old stop cancellation is not confirmed')
+                self.confirm_stop_canceled(old['client_id'])
                 with self.book.db:self.book.db.execute('DELETE FROM protection WHERE symbol=? AND side=?',(symbol,side))
             return
         account=self.check_account();rules=self.broker.rules(symbol)
@@ -370,42 +430,81 @@ class StrategyEngine:
                     triggerPrice=format(trigger,'f'),workingType='MARK_PRICE')
         if not account['hedge_mode']:params['reduceOnly']='true'
         if old:
-            status=self.broker.query_stop(old['client_id'])
+            status=self.query_protection(old['client_id'])
             if status.get('algoStatus')=='NEW' and self.stop_matches(status,params):
                 return
+        if hasattr(self.broker,'mark_price'):
+            mark=dec(self.broker.mark_price(symbol))
+            if mark<=0:raise Halt('Invalid mark price; stop submission blocked')
+            if (side=='LONG' and mark<=trigger) or (side=='SHORT' and mark>=trigger):
+                raise Halt('Configured stop is already crossed by mark price; no automatic stop widening: '
+                           +'mark='+str(mark)+', trigger='+str(trigger))
         client='ps2_'+hashlib.sha256((reference+symbol+side+position['qty']).encode()).hexdigest()[:28]
         params['clientAlgoId']=client
+        submission_error=None
         # Persist protection intent before submission. Recovery queries its stable id.
         if not old or old['client_id']!=client:
             with self.book.db:
                 if old:self.book.db.execute('INSERT OR IGNORE INTO retired_stops VALUES (?,?,?)',(old['client_id'],symbol,side))
                 self.book.db.execute('INSERT OR REPLACE INTO protection VALUES (?,?,?,?)',(symbol,side,client,json.dumps(params)))
-            try:self.broker.place_stop(params)
-            except Exception:pass
-        status=self.broker.query_stop(client)
+            try:
+                acknowledgement=self.broker.place_stop(params)
+                if acknowledgement.get('algoId') is not None:
+                    if acknowledgement.get('clientAlgoId',client)!=client:
+                        raise Halt('Stop submission acknowledged a different client identity')
+                    with self.book.db:self.book.db.execute('INSERT OR REPLACE INTO protection_ack VALUES (?,?)',
+                                                          (client,str(acknowledgement['algoId'])))
+            except Exception as exc:submission_error=exc
+        try:status=self.query_protection(client)
+        except Exception as exc:
+            if submission_error is not None:
+                def detail(error):
+                    return str(error) if isinstance(error,(Halt,APIError,Invalid)) else type(error).__name__
+                raise Halt('Stop submission was not confirmed: '+detail(submission_error)
+                           +'; subsequent query: '+detail(exc)) from None
+            raise
         if status.get('algoStatus')!='NEW' or not self.stop_matches(status,params):
             raise Halt('Exchange stop is not confirmed; no new orders allowed')
         self.cleanup_retired_stops()
 
+    def skip(self,event,reason):
+        detail=dict(reason=reason)
+        if self.price_check:detail['price_check']=self.price_check
+        with self.book.db:
+            inserted=self.book.db.execute('INSERT OR IGNORE INTO intents VALUES (?,?,?,?,?)',
+                (event['id'],'skip_'+hashlib.sha256(event['id'].encode()).hexdigest()[:28],
+                 'skipped','{}',json.dumps(detail)))
+        return dict(state='skipped' if inserted.rowcount else 'duplicate',**detail)
+
     def handle(self,event):
+        self.validate_broker(self.broker)
+        self.price_check=None
         self.recover()
         if self.book.db.execute('SELECT 1 FROM intents WHERE id=?',(event['id'],)).fetchone():return dict(state='duplicate')
         intent,reason=self.plan(event)
-        if intent is None:
-            with self.book.db:self.book.db.execute('INSERT INTO intents VALUES (?,?,?,?,?)',
-                (event['id'],'skip_'+hashlib.sha256(event['id'].encode()).hexdigest()[:28],'skipped','{}',json.dumps({'reason':reason})))
-            return dict(state='skipped',reason=reason)
-        response=self.submit(intent)
+        if intent is None:return self.skip(event,reason)
+        try:response=self.submit(intent)
+        except EntrySkipped as exc:return dict(state='skipped',reason=str(exc),price_check=self.price_check)
         try:self.protect(event['symbol'],intent['position_side'],event['id'])
-        except Exception:
+        except Exception as exc:
             # Emergency exits are also durable, quantity-bounded, demo-only intents.
             positions=self.book.positions()
             target=next((p for p in positions if p['symbol']==event['symbol'] and p['side']==intent['position_side']),None)
+            detail=str(exc) if isinstance(exc,(Halt,Invalid,APIError)) else type(exc).__name__
+            if not target:
+                raise Halt('Owned demo position is flat; stop cleanup needs review: '+detail) from None
             if target:
                 exit_event=dict(event,id=event['id']+'-protection-exit',action='CLOSE_'+target['side'])
                 try:
                     exit_intent,_=self.plan(exit_event)
                     if exit_intent:self.submit(exit_intent)
                 except Exception:pass
-            raise Halt('Protection failed; testnet emergency exit attempted. Review position and stop state before restarting') from None
-        return dict(state='settled',order=response,pool=self.book.public())
+            raise Halt('Protection failed; owned-position emergency exit attempted. Review position and stop state before restarting: '+detail) from None
+        return dict(state='settled',order=response,pool=self.book.public(),price_check=self.price_check)
+
+
+class StrategyEngine(FuturesStrategyEngine):
+    """Existing Demo API remains locked, including after the common-core split."""
+    def validate_broker(self,broker):
+        if broker.environment!='testnet' or broker.base!='https://demo-fapi.binance.com':
+            raise Halt('Version-two execution is locked to Binance Futures demo; production is disabled')

@@ -4,6 +4,11 @@ from pathlib import Path
 import tempfile
 import json
 import unittest
+import pickle
+import subprocess
+import sys
+import textwrap
+from unittest.mock import patch
 
 from backend.core import Invalid
 from backend.executor import Halt,APIError
@@ -80,6 +85,216 @@ class DemoFake:
 
 
 class StrategyV2Tests(unittest.TestCase):
+    def test_late_publication_uses_first_detection_for_entry_processing_deadline(self):
+        event=signal('late-published',age=300)
+        event['detected_time']=datetime.now(timezone.utc).isoformat()
+        result=self.engine.handle(event)
+        self.assertEqual(result['state'],'settled')
+        self.assertEqual(self.broker.submit_count,1)
+        self.assertGreater(float(result['price_check']['source_delay_seconds']),299)
+
+    def test_absolute_three_percent_guard_rejects_both_sides_for_long_and_short(self):
+        for index,(action,price) in enumerate([('OPEN_LONG','96.99'),('OPEN_LONG','103.01'),
+                                               ('OPEN_SHORT','96.99'),('OPEN_SHORT','103.01')]):
+            self.broker.price=D(price)
+            result=self.engine.handle(signal('absolute-'+str(index),action))
+            self.assertEqual(result['reason'],'entry_deviation')
+            self.assertGreater(D(result['price_check']['absolute_percent']),3)
+        self.assertEqual(self.broker.submit_count,0)
+
+    def test_exact_three_percent_boundary_is_allowed_in_both_directions(self):
+        for action in ('OPEN_LONG','OPEN_SHORT'):
+            for price in ('97','103'):
+                self.broker.price=D(price)
+                intent,reason=self.engine.plan(signal('boundary-'+action+price,action))
+                self.assertIsNone(reason);self.assertIsNotNone(intent)
+
+    def test_matching_close_ignores_price_age_quote_and_leverage_entry_gates(self):
+        self.engine.handle(signal('before-unconditional-exit'))
+        self.broker.price=D('150')
+        with patch.object(self.broker,'quote',side_effect=AssertionError('A market close needs no entry quote')), \
+                patch.object(self.broker,'symbol_config',side_effect=AssertionError('Do not gate close on entry leverage')):
+            result=self.engine.handle(signal('old-exit','CLOSE_LONG',age=300))
+        self.assertEqual(result['state'],'settled')
+        self.assertEqual(self.engine.book.positions(),[])
+        self.assertEqual(self.broker.submit_count,2)
+
+    def test_exchange_stop_id_survives_restart_and_is_used_for_query_and_cancel(self):
+        from unittest.mock import Mock
+        original_place=self.broker.place_stop
+        def acknowledge(params):
+            state=original_place(params)
+            return dict(state,algoId=987)
+        self.broker.query_stop_id=Mock(side_effect=lambda order: next(iter(self.broker.stops.values())))
+        self.broker.cancel_stop_id=Mock(side_effect=lambda order: self.broker.cancel_stop(next(iter(self.broker.stops))))
+        with patch.object(self.broker,'place_stop',side_effect=acknowledge), \
+                patch.object(self.broker,'query_stop',side_effect=AssertionError('Must use saved exchange id')):
+            self.engine.handle(signal('exchange-id-open'))
+            self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)
+            self.engine.recover()
+            self.engine.handle(signal('exchange-id-close','CLOSE_LONG'))
+        self.broker.query_stop_id.assert_called_with('987')
+        self.broker.cancel_stop_id.assert_called_once_with('987')
+        self.assertEqual(self.broker.submit_count,2)
+
+    def test_stop_lookup_delay_is_requeried_without_another_submission(self):
+        original_query=self.broker.query_stop
+        queries=[0]
+        def delayed(client):
+            queries[0]+=1
+            if queries[0]<3:raise APIError(-2013)
+            return original_query(client)
+        with patch.object(self.broker,'query_stop',side_effect=delayed),patch('backend.strategy_v2.time.sleep'):
+            self.engine.handle(signal('delayed-stop-visibility'))
+        self.assertEqual(queries[0],3)
+        self.assertEqual(self.broker.submit_count,1)
+        self.assertEqual(len(self.broker.stops),1)
+        self.assertEqual(len(self.engine.book.positions()),1)
+
+    def test_crossed_mark_price_stop_is_not_widened_and_demo_position_is_exited(self):
+        from unittest.mock import Mock
+        self.broker.mark_price=Mock(return_value='95')
+        with self.assertRaisesRegex(Halt,'already crossed by mark price; no automatic stop widening'):
+            self.engine.handle(signal('mark-crossed-stop'))
+        self.assertEqual(self.broker.submit_count,2)
+        self.assertEqual(self.engine.book.positions(),[])
+        self.assertEqual(self.broker.stops,{})
+
+    def test_stop_rejection_does_not_hide_its_original_api_error(self):
+        with patch.object(self.broker,'place_stop',side_effect=APIError(-2021)):
+            with self.assertRaisesRegex(Halt,'Stop submission was not confirmed: Binance API code -2021; subsequent query: Binance API code -2013'):
+                self.engine.handle(signal('rejected-stop'))
+        self.assertEqual(self.broker.submit_count,2)
+        self.assertEqual(self.engine.book.positions(),[])
+        # A missing stop is not silently treated as canceled during recovery.
+        self.assertEqual(self.engine.book.db.execute('SELECT COUNT(*) FROM protection').fetchone()[0],1)
+
+    def test_stop_cancel_accepts_delayed_terminal_status_without_resending(self):
+        self.engine.handle(signal('delayed-cancel-open'))
+        original_query=self.broker.query_stop
+        stale=[True]
+        def delayed_status(client):
+            state=original_query(client)
+            if state['algoStatus']=='CANCELED' and stale[0]:
+                stale[0]=False
+                return dict(state,algoStatus='NEW')
+            return state
+        with patch.object(self.broker,'query_stop',side_effect=delayed_status), \
+                patch.object(self.broker,'cancel_stop',wraps=self.broker.cancel_stop) as cancel, \
+                patch('backend.strategy_v2.time.sleep'):
+            self.engine.handle(signal('delayed-cancel-close','CLOSE_LONG'))
+        self.assertEqual(cancel.call_count,1)
+        self.assertEqual(self.engine.book.positions(),[])
+        self.assertEqual(self.engine.book.db.execute('SELECT COUNT(*) FROM protection').fetchone()[0],0)
+
+    def test_stop_cancel_lost_ack_is_verified_by_query(self):
+        self.engine.handle(signal('cancel-ack-open'))
+        original_cancel=self.broker.cancel_stop
+        def cancel_then_timeout(client):
+            original_cancel(client)
+            raise TimeoutError('injected lost cancellation acknowledgement')
+        with patch.object(self.broker,'cancel_stop',side_effect=cancel_then_timeout) as cancel:
+            self.engine.handle(signal('cancel-ack-close','CLOSE_LONG'))
+        self.assertEqual(cancel.call_count,1)
+        self.assertEqual(self.broker.submit_count,2)
+        self.assertEqual(self.broker.open_stops('BTCUSDT'),[])
+
+    def test_flat_position_with_unknown_cancel_retains_stop_and_reports_cleanup(self):
+        self.engine.handle(signal('unknown-cancel-open'))
+        with patch.object(self.broker,'cancel_stop',side_effect=TimeoutError('injected offline')), \
+                patch('backend.strategy_v2.time.sleep'):
+            with self.assertRaisesRegex(Halt,'flat; stop cleanup.*TimeoutError'):
+                self.engine.handle(signal('unknown-cancel-close','CLOSE_LONG'))
+        self.assertEqual(self.broker.submit_count,2)
+        self.assertEqual(self.engine.book.positions(),[])
+        self.assertEqual(self.engine.book.db.execute('SELECT COUNT(*) FROM protection').fetchone()[0],1)
+        self.engine.recover()
+        self.assertEqual(self.broker.open_stops('BTCUSDT'),[])
+
+    def test_repeated_open_and_close_stay_deduplicated_across_restart(self):
+        self.engine.handle(signal('stable-open'))
+        self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)
+        for _ in range(3):
+            self.assertEqual(self.engine.handle(signal('stable-open'))['state'],'duplicate')
+        self.assertEqual(self.broker.submit_count,1)
+        self.engine.handle(signal('stable-close','CLOSE_LONG'))
+        self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)
+        for _ in range(3):
+            self.assertEqual(self.engine.handle(signal('stable-close','CLOSE_LONG'))['state'],'duplicate')
+            self.assertEqual(self.engine.handle(signal('stable-open'))['state'],'duplicate')
+        self.assertEqual(self.broker.submit_count,2)
+        self.assertEqual(self.engine.book.positions(),[])
+        self.assertEqual(self.broker.open_stops('BTCUSDT'),[])
+
+    def test_filled_open_with_lost_ack_and_offline_query_recovers_without_resubmit(self):
+        self.broker.lose_ack=True
+        with patch.object(self.broker,'query',side_effect=TimeoutError('injected offline query')):
+            with self.assertRaisesRegex(Halt,'unknown'):
+                self.engine.handle(signal('offline-open'))
+            self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)
+            with self.assertRaisesRegex(Halt,'no resubmission'):self.engine.recover()
+            self.assertEqual(self.broker.submit_count,1)
+            self.assertEqual(len(self.engine.book.pending()),1)
+        self.engine.recover()
+        self.assertEqual(self.broker.submit_count,1)
+        self.assertEqual(self.engine.book.pending(),[])
+        self.assertEqual(len(self.engine.book.positions()),1)
+        self.assertEqual(len(self.broker.open_stops('BTCUSDT')),1)
+        self.assertEqual(self.engine.handle(signal('offline-open'))['state'],'duplicate')
+
+    def test_filled_close_with_lost_ack_recovers_and_cancels_remaining_stop(self):
+        self.engine.handle(signal('before-offline-close'))
+        self.broker.lose_ack=True
+        with patch.object(self.broker,'query',side_effect=TimeoutError('injected offline query')):
+            with self.assertRaisesRegex(Halt,'unknown'):
+                self.engine.handle(signal('offline-close','CLOSE_LONG'))
+            self.assertEqual(self.broker.submit_count,2)
+            self.assertEqual(len(self.engine.book.pending()),1)
+        self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)
+        self.engine.recover()
+        self.assertEqual(self.broker.submit_count,2)
+        self.assertEqual(self.engine.book.positions(),[])
+        self.assertEqual(self.broker.open_stops('BTCUSDT'),[])
+        self.assertEqual(self.engine.handle(signal('offline-close','CLOSE_LONG'))['state'],'duplicate')
+
+    def test_adverse_three_percent_filter_applies_to_both_entry_directions(self):
+        self.broker.price=D('103.01')
+        self.assertEqual(self.engine.handle(signal('too-high-long'))['reason'],'entry_deviation')
+        self.broker.price=D('96.99')
+        self.assertEqual(self.engine.handle(signal('too-low-short','OPEN_SHORT'))['reason'],'entry_deviation')
+        self.assertEqual(self.broker.submit_count,0)
+
+    def test_process_crash_after_exchange_fill_recovers_without_second_order(self):
+        # The child has only a fake broker and a temporary journal; no API keys or network.
+        exchange=Path(self.temp.name)/'fixture-exchange.pickle'
+        child=textwrap.dedent('''
+            import os,pickle,sys
+            from tests.test_strategy_v2 import DemoFake,StrategyPolicy,StrategyEngine,signal
+            policy=StrategyPolicy('60','0.40',10,3,'0.03','60','initial_net_loss',60,
+                {'BTCUSDT':'crypto','ETHUSDT':'crypto','ZECUSDT':'crypto','NVDAUSDT':'equity'})
+            broker=DemoFake()
+            engine=StrategyEngine(sys.argv[1],policy,broker)
+            def crash_before_accounting(intent,response):
+                with open(sys.argv[2],'wb') as output:pickle.dump(broker,output)
+                os._exit(23)
+            engine.settle=crash_before_accounting
+            engine.handle(signal('process-crash-open'))
+        ''')
+        self.engine.close()
+        result=subprocess.run([sys.executable,'-c',child,str(self.path),str(exchange)],
+            cwd=Path(__file__).resolve().parents[1],capture_output=True,timeout=15)
+        self.engine=StrategyEngine(self.path,self.policy,self.broker)
+        self.assertEqual(result.returncode,23,result.stderr.decode(errors='replace'))
+        self.engine.close()
+        with exchange.open('rb') as source:self.broker=pickle.load(source)
+        self.engine=StrategyEngine(self.path,self.policy,self.broker)
+        self.assertEqual(len(self.engine.book.pending()),1)
+        self.engine.recover()
+        self.assertEqual(self.broker.submit_count,1)
+        self.assertEqual(self.engine.book.pending(),[])
+        self.assertEqual(len(self.broker.open_stops('BTCUSDT')),1)
+        self.assertEqual(self.engine.handle(signal('process-crash-open'))['state'],'duplicate')
+
     def test_restart_cancels_known_stop_left_after_a_verified_flat_close(self):
         self.engine.handle(signal('before-close-crash'))
         stop_id=next(iter(self.broker.stops))
@@ -131,7 +346,9 @@ class StrategyV2Tests(unittest.TestCase):
         original_cancel=self.broker.cancel_stop
         def lost_cancel(client):raise TimeoutError('cancel acknowledgement unknown')
         self.broker.cancel_stop=lost_cancel
-        with self.assertRaises(TimeoutError):self.engine.protect('BTCUSDT','LONG','replacement')
+        with patch('backend.strategy_v2.time.sleep'):
+            with self.assertRaisesRegex(Halt,'cancellation is not confirmed'):
+                self.engine.protect('BTCUSDT','LONG','replacement')
         self.assertEqual(self.engine.book.db.execute('SELECT COUNT(*) FROM retired_stops').fetchone()[0],1)
         self.broker.cancel_stop=original_cancel
         self.engine.close();self.engine=StrategyEngine(self.path,self.policy,self.broker)

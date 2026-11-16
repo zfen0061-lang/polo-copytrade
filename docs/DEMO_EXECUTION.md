@@ -41,4 +41,44 @@ The separate workspace uses Binance Futures Demo only, on localhost:8766. Produc
 
 The journal tracks actual fills, USDT fees and owned-interval funding, uses stable order IDs to resolve uncertain outcomes, and preserves exchange-stop ownership and pending cancellations. Hedge and single-direction test paths are supported. Unowned/manual positions are blocked. A cumulative loss threshold attempts an owned Demo exit and halts. Exchange-side stops remain after stopping the session. Gaps, stale signals, incomplete accounting and unknown order outcomes require review.
 
-Rehearsal controls use the same Demo engine and are clearly separate from public trader operations. The initial strategy allocation is bookkeeping, not exchange fund segregation. The Demo journal, policy and logs use a separate directory; its keys remain in session memory and no trading resumes automatically. Fixture/browser tests are not a substitute for actual Demo exchange order and fill validation. No production order capability is enabled by this workflow.
+Rehearsal controls use the same Demo engine and are clearly separate from public trader operations. The initial strategy allocation is bookkeeping, not exchange fund segregation. The Demo journal, policy and logs use a separate directory. Keys are memory-only by default; the opt-in Windows-encrypted Demo connection below allows reconnecting without another prompt. No trading resumes automatically. Fixture/browser tests are not a substitute for actual Demo exchange order and fill validation. No production order capability is enabled by this workflow.
+
+## 本机记住 Demo 连接与后台复测 / Remember Demo and verify in the background
+
+1. 在本机运行 `remember-demo.cmd`，输入已有 Demo Key 和 Secret。此步骤只验证账户并用当前 Windows 用户的 DPAPI 加密保存连接，不下单。不要输入实盘密钥，不必重新创建 Demo API。
+2. 独立密文 `data/demo-v2/demo-account.dpapi` 使用与实盘不同的文件、格式、加密上下文和环境标记；运行数据不会纳入 Git。重新启动 Demo 后台可恢复连接，但不会恢复自动买卖。
+3. 打开 `http://127.0.0.1:8766`，确认虚拟资金说明后，点击“运行 Demo 止损检查”。此时不能同时启动跟随、修改策略或运行第二份复测。
+4. 后台独立进程使用保存的 Demo 连接、20 USDT 虚拟额度和独立账本进行有时限复测。页面显示进度、实际止损成交、空仓和保护单清理结果；`timeout`、`blocked`、`error` 都不是通过。
+5. 只有核对完结果、策略参数和新鲜的公开信号源后，才另行启动 Demo 跟随。后台复测本身不会自动启动跟随；只接收到平仓信号时也不会凭空创建仓位。
+
+Run `remember-demo.cmd` once to verify and encrypt the existing Demo pair locally. This uses current-user Windows DPAPI with a separate Demo file and encryption context. The webpage never accepts credentials. After reconnection, the authenticated Demo UI can launch a bounded verification worker using `--saved`; no keys are placed in child arguments or environment variables, and real-account keys are never used. Verification and following are mutually exclusive. Restarting reconnects only: following still requires explicit start. A changed/revoked API key or unavailable original Windows user can require local reconnection.
+
+## 扩展 Demo 合约范围 / Expand the approved Demo universe
+
+在停止跟随、账户空仓且没有委托时，可明确运行 `python -m backend.demo_scope --expand`。程序读取 Demo 合约目录，只纳入交易中的 USDT 保证金永续、支持当前 LIMIT/IOC、MARKET 和 STOP_MARKET 方式的合约。COIN 归类为加密资产，EQUITY/HK_EQUITY 及有明确 TradFi/Pre-IPO 标记的盘前合约归类为股票，INDEX/COMMODITY 归类为传统资产；其他不明确的盘前类型不会默认按币交易。
+
+扩展前备份账本，保留本金、已实现净盈亏、最高净值、历史成交和去重记录，原损失上限不重置。在明确扩展模式下，首次开仓前可以自动将 **Demo** 对应合约准备为批准的杠杆（本安装中加密 10 倍，股票/传统资产 3 倍），并读取确认；只有资金池空闲、无未归属仓位或订单、分类仍有效时才会准备。默认模式仍要求手动核对杠杆。不会改变实盘杠杆、账户模式或现有手动仓位。
+
+这些合约是候选范围，共用一个资金池，同时最多一笔跟单仓位。扩展不意味着每种合约都已实际成交测试，也不保证市场开放、报价、最小数量等条件总能满足。新上市品种需要重新审核并更新目录快照；不追溯补开停机或启动前的历史仓位。
+
+Explicit expansion is Demo-only and requires a stopped, flat, settled account with no open orders. It backs up the existing ledger and changes only the approved symbol scope and its fingerprint, retaining capital, losses and deduplication history. In expansion mode the first eligible entry may prepare and verify Demo leverage using the fixed policy; no production settings or position mode changes occur. Unknown classifications are excluded. The scope shares one capital pool and is a catalogue snapshot, not a claim that every contract has been exchange-tested.
+
+公开采集短暂超过新鲜度阈值时，Demo 会暂挂信号处理，继续核对账户、资金风险和已有保护单；采集恢复后按原游标和开仓信号有效期继续检查。明确的用户平仓请求仍可处理。未解决订单、仓位不一致或交易所异常仍可能停止会话，不会自动盲目重下单。
+
+Temporary public-source staleness holds signal processing while exchange protection and risk maintenance continue. Freshness recovery resumes from the same cursor with the same entry-age limit. Unknown orders, mismatched ownership and exchange failures still halt for review; this is not an automatic order replay or restart of execution after a process reboot.
+
+## 正负 3% 开仓与平仓优先 / Symmetric entry band and exit priority
+
+当前 Demo 的开仓门槛是 `abs(可成交报价 / 交易员成交价 - 1) <= 0.03`：开多使用卖一价，开空使用买一价。上下两边都检查；即使价格朝有利方向变化超过 3%，也按此规则跳过。下单仍使用 IOC 限价单约束不利成交价格。下单前报价检查不等于能保证最终每笔成交价都在绝对区间内：更优价格成交和快速行情变化仍可能发生。
+
+公开操作的成交时间保留用于延迟统计；开仓处理时限从本机 `first_seen` 首次检测时间起算，仍为 60 秒。启动历史基线、稳定信号编号去重和资金检查保留。同批已经有后续同合约同方向平仓记录的开仓会记为 `superseded_by_close`，不追入已经结束的一轮交易。被暂挂的开仓保留游标，以免跨过尚未处理的信号；仍受检测后处理时限限制。
+
+已记录、可验证的平仓操作会优先检查并尝试市价平掉对应的自有 Demo 仓位，不受 3% 开仓价差、开仓时效、入场杠杆核对或后续采集暂时失去新鲜度的限制。平空是买入减仓，不能把所有 SELL 都当平仓。没有匹配自有仓位时跳过，不会替用户关闭其他手动仓位。网络、交易所拒单、未解决订单或仓位不一致仍可能阻止完成，不能保证任何条件下都立即成交。
+
+New public openings use executable ask/bid quotes and a symmetric absolute 3% band. Detection-based processing age replaces execution-age rejection, without replaying history. Recorded matching exits are processed first, including during a later source freshness gap; they use quantity-bounded market closes and bypass entry-only gates. Actual execution is still subject to exchange availability and ownership reconciliation. Subsequent opening decisions log their reference, executable quote, signed/absolute deviation and source delay.
+
+## 后台恢复与校时 / Runtime recovery and signing clock
+
+签名时间使用服务端时间锚点与单调计时，避免 Windows 自动校时改变请求时间；过慢的校时样本会被丢弃。只读 GET 遇到 `-1021` 时最多校时并重试一次，下单与撤单不会因此重发。公开采集在响应完成时立即核验正文；特定的浏览器正文失效错误会按退避机制重建采集器，保留进程内的观察游标。访问限制、限流、格式或身份异常仍会停止采集，不能保证任何网络条件下持续运行。
+
+Signed timestamps use a server-time anchor and monotonic elapsed time; slow clock samples are rejected. Only a rejected signed GET receives one clock correction and retry. Submissions and cancellations are not replayed. Completed public responses are validated immediately; an expired browser-body error rebuilds the collector with backoff and preserves its in-process cursor. Access restrictions, rate limits and invalid source data remain blocked. Restart restores saved credentials, not automatic execution after a process reboot.

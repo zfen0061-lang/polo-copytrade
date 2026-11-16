@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Polo CopyTrade · 实盘自动跟随</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/demo.css"></head>
+<body><main class="demo-shell">
+<header class="demo-header"><div class="demo-brand"><img src="/polo-logo.png" alt="Polo" width="48" height="48"><div><strong>Polo CopyTrade</strong><span>PRODUCTION / 真实资金</span></div></div><a class="secondary link-button" href="http://127.0.0.1:8765" target="_blank" rel="noopener">账户只读与采集后台</a><a class="secondary link-button" href="http://127.0.0.1:8766" target="_blank" rel="noopener">Demo 工作台</a><span id="connection" class="pill subtle">连接后台中</span></header>
+<h1>实盘自动跟随 · 熬鹰资本</h1>
+<p class="callout small">点击“启动实盘自动跟随”，程序自动核对账户；确认金额和规则后开始自动买卖。运行状态、持仓和操作记录会持续更新。关闭网页不会停止后台。</p>
+<p id="error" class="form-error" role="alert"></p>
+<div class="demo-status-grid">
+<section class="card"><span class="eyebrow">REAL ACCOUNT</span><h2>独立跟单账户</h2><p id="account">尚未读取</p><p id="account-time" class="small muted"></p><button id="inspect" class="secondary">刷新账户</button><p class="small muted">已保存的子账户连接会保留，不需要重复输入密钥。启动时自动核对账户；已有仓位或委托会显示具体原因。</p></section>
+<section class="card"><span class="eyebrow">LOCKED SOURCE</span><h2>熬鹰资本 · 公开信号</h2><p id="source">等待采集</p><p class="small muted">公开成交记录存在发布和采集延迟，无法读取交易员未公开的杠杆或止损。开多、开空按当前可成交报价检查绝对价差 ≤ 3%；超过则跳过。平仓信号只关闭本程序该合约、该方向的全部仓位。</p></section>
+<section class="card"><span class="eyebrow">PRODUCTION JOURNAL</span><h2>独立实盘账本</h2><p id="capital">尚未初始化</p><p class="small muted">独立于 Demo。一个资金池同时最多持有一笔仓位，按已核实净收益复投；不会采用尚未敲定的多仓分配方案。策略预算不是交易所账户的物理资金隔离。</p></section>
+</div>
+<div class="demo-columns"><section class="card"><div class="section-head"><h2>实盘策略参数</h2><span id="policy-state" class="pill subtle">未保存</span></div>
+<form id="policy"><div class="form-grid">
+<label>初始策略资金 / USDT<input name="initial_capital" type="number" min="0.01" step="0.01" required></label>
+<label>累计亏损上限 / USDT<input name="max_loss" type="number" min="0.01" step="0.01" required></label>
+<label class="span-two">累计亏损计算方式<select name="loss_basis" required><option value="initial_net_loss">相对初始资金的净亏损</option><option value="peak_drawdown">相对策略净值高点的回撤</option></select></label>
+<label>加密货币杠杆<input name="crypto_leverage" type="number" min="1" max="10" step="1" required></label>
+<label>股票／传统资产杠杆<input name="equity_leverage" type="number" min="1" max="5" step="1" required></label>
+<label>保证金亏损止损目标 / %<input name="margin_stop_percent" type="number" min="0.01" max="99" step="0.01" required></label>
+<label>开仓绝对价差上限 / %<input name="deviation_percent" type="number" min="0.01" max="99" step="0.01" required></label>
+<label>本机首次检测后处理时限 / 秒<input name="max_signal_age" type="number" min="1" max="3600" step="1" required></label>
+<label class="span-two">加密货币候选合约（逗号分隔）<textarea name="crypto_symbols" rows="3" required></textarea></label>
+<label class="span-two">股票类候选合约<textarea name="equity_symbols" rows="2"></textarea></label>
+<label class="span-two">传统资产／指数／商品候选合约<textarea name="traditional_symbols" rows="2"></textarea></label>
+</div><p class="small muted">候选列表可从现有 Demo 参数预填，需单独保存为实盘参数。每次开仓仍以实盘合约目录核验可交易性与分类。资金池空闲时，程序可为目标合约准备并回读逐仓和指定杠杆；不会切换账户持仓模式。</p>
+<p class="small muted">40% 指保证金亏损目标，不是价格下跌 40%。止损按标记价格触发，手续费、资金费与滑点可能增加实际亏损。有交易历史后，参数修改需要独立审核，不能通过重新保存重置资金账本。</p>
+<button class="primary" type="submit">保存实盘参数（不会下单）</button></form></section>
+<section class="card"><div class="section-head"><h2>执行控制</h2><span id="phase" class="pill subtle">未启动</span></div>
+<p id="review" class="small muted">点击启动会自动核对账户，确认后持续跟随。</p>
+<div class="button-row"><button id="start" class="primary" disabled>启动实盘自动跟随</button><button id="pause" class="secondary" disabled>暂停新开仓</button><button id="stop" class="secondary" disabled>停止跟随</button></div>
+<p class="small muted">暂停新开仓会继续处理平仓和保护。停止跟随会结束本次执行，已有交易所止损仍保留，不会自动全平。重启恢复连接后仍需重新启动；已有仓位或未确认订单会阻止新会话。</p>
+<button id="close-owned" class="secondary" disabled>全平本程序仓位，并暂停新开仓</button>
+<p id="tick" class="small muted"></p>
+<p class="small muted">本版本要求可交易的单向、单资产 USDT 合约账户。请避免在同一账户混合手动交易。电脑断网、睡眠、关机或进程退出会影响跟随；已确认的交易所止损独立保留。</p>
+</section></div>
+<section class="card"><h2>本程序持仓</h2><table><thead><tr><th>合约／方向</th><th>数量</th><th>成本</th><th>杠杆</th></tr></thead><tbody id="positions"></tbody></table></section>
+<section class="card"><h2>运行记录</h2><div id="logs"></div></section>
+<footer class="small muted">真实资金与 Demo 分开。重复信号去重；订单结果不明时先查单，不盲目重发；非本程序仓位不会自动接管。当前工作台为源代码安装版本。</footer>
+</main><script type="module" src="/real-ui.js"></script></body></html>

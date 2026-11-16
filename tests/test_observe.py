@@ -6,6 +6,7 @@ import unittest
 
 from backend.core import Store,Invalid
 from backend.observe import SignalObserver,AOYING_URL
+from backend.feeds import PublicResponseUnavailable
 
 
 def operation(key,action='OPEN_LONG',symbol='BTCUSDT'):
@@ -78,6 +79,16 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(self.store.snapshot()['orders'],[])
         self.assertFalse(self.observer.recover_crashed_browser(Invalid('Public access restricted')))
 
+    def test_expired_response_rebuild_preserves_cursor_and_detects_next_operation(self):
+        self.observer.poll()
+        self.assertTrue(self.observer.recover_crashed_browser(PublicResponseUnavailable('body expired')))
+        self.assertTrue(self.observer.initialized)
+        replacement=FakeCollector();replacement.rows=[operation('after-body-expiry'),*replacement.rows]
+        self.observer.collector_factory=lambda:replacement
+        self.assertEqual(self.observer.poll(),1)
+        self.assertEqual(self.store.snapshot()['events'][0]['status'],'observed')
+        self.assertFalse(self.observer.recover_crashed_browser(Invalid('rate limited')))
+
     def test_restart_preserves_counts_and_rebaselines_missed_operations(self):
         self.observer.poll()
         self.observer.close()
@@ -92,6 +103,25 @@ class ObserverTests(unittest.TestCase):
             self.assertEqual(len(state['events']),2)
             self.assertEqual(state['events'][0]['status'],'baseline')
             self.assertEqual(state['orders'],[])
+        finally:restarted.close()
+
+    def test_verified_transient_restart_retains_intervening_close_as_observed(self):
+        self.observer.poll();self.observer.meta['restartable']=True
+        self.observer.close('error','ConnectionError: temporarily busy')
+        self.collector.rows=[operation('during-retry','CLOSE_LONG'),*self.collector.rows]
+        restarted=SignalObserver(self.store,collector_factory=lambda:self.collector)
+        try:
+            restarted.claim();self.assertTrue(restarted.initialized);restarted.poll()
+            self.assertEqual(self.store.snapshot()['events'][0]['status'],'observed')
+            self.assertEqual(self.store.snapshot()['orders'],[])
+        finally:restarted.close()
+
+    def test_transient_failure_before_any_baseline_cannot_make_history_actionable(self):
+        self.observer.meta['restartable']=True;self.observer.close('error','ConnectionError: busy')
+        restarted=SignalObserver(self.store,collector_factory=lambda:self.collector)
+        try:
+            restarted.claim();self.assertFalse(restarted.initialized);restarted.poll()
+            self.assertEqual(self.store.snapshot()['events'][0]['status'],'baseline')
         finally:restarted.close()
 
     def test_history_gap_stops_before_inserting_new_operations(self):

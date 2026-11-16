@@ -15,7 +15,7 @@ class SigningTests(unittest.TestCase):
         expected=('symbol=BTCUSDT&side=BUY&type=LIMIT&quantity=1&price=9000&timeInForce=GTC'
                   '&recvWindow=5000&timestamp=1591702613943'
                   '&signature=3c661234138461fcc7a7d8746c6558c9842d4e10870d2ecbedf7777cad694af9')
-        with patch('backend.live.time.time',return_value=1591702613.943), \
+        with patch.object(client,'signing_timestamp',return_value=1591702613943), \
                 patch.object(client.opener,'open',return_value=io.BytesIO(b'{}')) as request:
             client.request('GET','/fapi/v1/accountConfig',params,signed=True)
         actual=request.call_args.args[0]

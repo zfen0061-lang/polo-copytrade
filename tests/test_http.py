@@ -67,6 +67,8 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/demo-v2/inspect',{'secret':'do-not-submit'},self.token)[0],400)
         self.assertEqual(self.request('/api/live/start',{},self.token)[0],400)
         self.assertEqual(self.request('/api/demo-v2/start',{'confirmation':'wrong'},self.token)[0],400)
+        self.assertEqual(self.request('/api/demo-v2/verify-stop',{'confirmation':'wrong'},self.token)[0],400)
+        self.assertEqual(self.request('/api/demo-v2/verify-stop',{'secret':'never-submit'},self.token)[0],400)
         self.assertIn(b'FUTURES DEMO',self.request('/')[1])
 
     def test_mutations_require_token_and_same_origin(self):

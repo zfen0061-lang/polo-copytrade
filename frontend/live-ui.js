@@ -136,18 +136,22 @@ export function createAccountUI({api,toast,language}) {
     const healthy=supervised&&runtime.backend_healthy&&Date.now()-Date.parse(runtime.heartbeat)<15000;
     const remembered=runtime?.saved_connection===true;
     const recoveryNote=remembered?text('连接已由 Windows 当前用户加密保存，后台重启或登录后可自动重连。','Connection encrypted for this Windows user; reconnects after worker restart or login.'):text('连接暂存本次会话；可点“记住当前连接”启用加密恢复。','Connection is in session memory; choose Remember connection for encrypted recovery.');
-    runtimeCard.innerHTML=`<div class="section-head"><h2>${text('后台运行状态','Background service')}</h2><span class="pill ${healthy?'green':'subtle'}">${healthy?text('守护运行中 · 只读监测','SUPERVISED · READ ONLY'):text('后台未受守护或状态过期','UNMANAGED OR STALE')}</span></div><p class="small muted">${supervised?text('后台异常退出后会自动重启；关闭网页不影响采集。','The supervisor restarts failed workers; closing this page does not stop collection.'):text('请使用 open-continuous-monitor.cmd 启动持续监测。','Use open-continuous-monitor.cmd for continuous monitoring.')}<br>${account.configured?text('账户密钥已在本次会话中；后台独立刷新账户。','Credentials are in this session; account reads run independently.'):text('账户尚未连接：双击 reconnect-readonly-account.cmd，在本机隐藏输入密钥。','Account disconnected: run reconnect-readonly-account.cmd and enter credentials locally.')}<br>${recoveryNote}<br>${text('允许息屏；接电且后台运行时防自动睡眠。关机、手动睡眠、合盖和断网仍会中断。当前不会自动交易。','Display may turn off. AC power and a running monitor prevent idle sleep. Power off, manual sleep, lid close and lost connectivity interrupt monitoring. Automatic trading is off.')}</p>${runtime?.error?`<p class="form-error">${safe(runtime.error)}</p>`:''}`;
+    runtimeCard.innerHTML=`<div class="section-head"><h2>${text('后台运行状态','Background service')}</h2><span class="pill ${healthy?'green':'subtle'}">${healthy?text('守护运行中 · 只读监测','SUPERVISED · READ ONLY'):text('后台未受守护或状态过期','UNMANAGED OR STALE')}</span></div><p class="small muted">${supervised?text('后台异常退出后会自动重启；关闭网页不影响采集。','The supervisor restarts failed workers; closing this page does not stop collection.'):text('请使用 open-continuous-monitor.cmd 启动持续监测。','Use open-continuous-monitor.cmd for continuous monitoring.')}<br>${account.configured?text('账户密钥已在本次会话中；后台独立刷新账户。','Credentials are in this session; account reads run independently.'):text('账户尚未连接：双击 reconnect-readonly-account.cmd，在本机隐藏输入密钥。','Account disconnected: run reconnect-readonly-account.cmd and enter credentials locally.')}<br>${recoveryNote}<br>${text('允许息屏；接电且后台运行时防自动睡眠。关机、手动睡眠、合盖和断网仍会中断。这里仅管理查看与采集；实盘跟单状态请进入跟单页查看。','Display may turn off. AC power and a running monitor prevent idle sleep. Power off, manual sleep, lid close and lost connectivity interrupt monitoring. This service handles account reads and collection; view live following in its dedicated workspace.')}</p>${runtime?.error?`<p class="form-error">${safe(runtime.error)}</p>`:''}`;
     if(runtime?.components?.observer?.blocked){
       runtimeCard.insertAdjacentHTML('beforeend',`<p class="form-error">${safe(runtime.components.observer.blocked)}</p><button class="secondary" data-retry-collector>${text('重新检查采集','Recheck collector')}</button>`);
     }
     const actions=document.createElement('div');actions.className='button-row';
     actions.innerHTML=`<span class="pill ${remembered?'green':'subtle'}">${remembered?text('Windows 加密保存','WINDOWS ENCRYPTED'):text('仅本次会话','SESSION ONLY')}</span>${account.connected&&!remembered?`<button class="secondary" data-runtime-action="remember-account">${text('记住当前连接','Remember connection')}</button>`:''}${remembered?`<button class="ghost" data-runtime-action="forget-account">${text('不再记住连接','Forget saved connection')}</button>`:''}${supervised?`<button class="ghost danger" data-runtime-action="stop">${text('停止后台','Stop background monitor')}</button>`:''}`;
+    const realLink=document.createElement('a');realLink.className='primary link-button';realLink.href='http://127.0.0.1:8767/';realLink.textContent=text('进入实盘跟单','Open live copy trading');actions.appendChild(realLink);
     const demoLink=document.createElement('a');demoLink.className='secondary link-button';demoLink.href='http://127.0.0.1:8766/';demoLink.target='_blank';demoLink.rel='noopener';demoLink.textContent=text('测试网执行台','Futures Demo workspace');actions.appendChild(demoLink);
     runtimeCard.appendChild(actions);
     if(runtime?.credential_error){const warning=document.createElement('p');warning.className='form-error';warning.textContent=runtime.credential_error;runtimeCard.appendChild(warning);}
     const connected=account.connected,live=account.environment==='production',readOnly=account.execution_allowed===false;
+    $('.live-controls').classList.toggle('hidden',readOnly);
     readinessNote.classList.toggle('hidden',!connected);
-    if(connected){
+    if(connected&&readOnly){
+      readinessNote.textContent=text('本页显示原账户的只读信息。跟单账户的运行状态、参数、持仓和交易记录，请点击“进入实盘跟单”查看。','This page displays the original account in read-only mode. Open live copy trading to view the dedicated account, settings, positions and trade history.');
+    }else if(connected){
       const checks=[];
       if(account.account?.hedge_mode)checks.push(text('双向持仓模式尚未适配','hedge mode is not yet supported'));
       if(account.account?.multi_assets)checks.push(text('多资产模式尚未适配','multi-assets mode is not yet supported'));
@@ -181,7 +185,7 @@ export function createAccountUI({api,toast,language}) {
       $('#notice-text').textContent=live?text('账户工作台与模拟实验室独立。真实账户连接后显示实际资金；主动启动跟随后，操作会向币安发送真实订单。','The account workspace is separate from the paper lab. A production connection displays real funds; explicitly starting following will send real Binance orders.'):text('当前选择交易所测试网，与模拟实验室不同；订单提交到测试网，不操作真实资金。','Exchange testnet is selected. Orders are sent to the testnet, independently of the local paper lab.');
       if(readOnly){
         $('#mode-badge').textContent=text(live?'真实账户 · 只读模式':'测试网 · 只读模式',live?'PRODUCTION · READ ONLY':'TESTNET · READ ONLY');
-        $('#notice-text').textContent=text('当前仅验证账户余额和持仓，账户下单入口已关闭。','This session reads account balances and positions only. Account order execution is disabled.');
+        $('#notice-text').textContent=text('当前页查看原账户并采集信号。实盘跟单独立运行，点击上方或左侧“实盘跟单”查看。','This page displays the original account and collects public signals. Live following runs separately; use the live copy trading link above or in the sidebar.');
       }
     }else{
       $('#mode-badge').textContent=text('模拟实验室','PAPER LAB');$('#mode-badge').className='pill green';
@@ -198,7 +202,7 @@ export function createAccountUI({api,toast,language}) {
   function updateApp(state){
     app=state;
     const planned=app.traders.find(t=>record(t.execution_draft).status==='draft');
-    draftCard.classList.toggle('hidden',!planned);
+    draftCard.classList.toggle('hidden',!planned||account?.execution_allowed===false);
     if(planned){
       const draft=record(planned.execution_draft);
       draftCard.innerHTML=`<div class="section-head"><h2>${safe(planned.name)} · ${text('跟单资金草案','Strategy capital draft')}</h2><span class="pill subtle">${text('待启用 · 未划转资金','DRAFT · NO TRANSFER')}</span></div><p>${text('初始分配','Initial allocation')}: <strong>${n(draft.initial_capital_usdt)} USDT</strong> · ${text('使用本策略可用资金滚动复投，不再每次取一半。','Compound the allocated strategy pool; do not halve it on each entry.')}</p><p class="small muted">${text('平仓：只全平对应合约、方向的本程序仓位。加密货币最高10倍，股票类最高5倍。','Close only the matching bot-owned symbol and side. Crypto cap: 10x; equity cap: 5x.')}<br>${text('待完成：累计亏损规则、账户模式适配、已有仓位归属及复投/止损执行验证。当前草案不会触发下单。','Pending: cumulative loss rule, account-mode compatibility, existing-position ownership and verified compounding/stop execution. This draft cannot send orders.')}</p>`;

@@ -1,8 +1,8 @@
 # Polo CopyTrade · v0.3.0
 
-Demo execution workspace: [Futures Demo guide](docs/DEMO_EXECUTION.md). A separate localhost:8766 UI supports explicit testnet follow sessions, rehearsals, policy selection, accounting and recovery. Production remains read-only. Source/browser fixtures are verified; actual exchange Demo order validation still requires separate Demo keys.
+Source execution workspaces: [Production automatic following](docs/REAL_EXECUTION.md) on localhost:8767 and [Futures Demo](docs/DEMO_EXECUTION.md) on localhost:8766. Both share the strategy/accounting core with separate endpoints, ledgers and start authorization. Production opens disarmed; a user-reviewed local start enables subsequent automatic real orders. No real-money cycle was executed during development.
 
-Source update: [continuous read-only monitoring](docs/CONTINUOUS_MONITOR.md) adds a Windows login task, worker recovery and browser-independent account reads. The old v0.3.0-preview binary does not include it. The V2 execution module is testnet-only and is not integrated into the dashboard yet.
+The [continuous read-only monitor](docs/CONTINUOUS_MONITOR.md) remains on localhost:8765. The old v0.3.0-preview binary does not contain these source updates; no new executable release is claimed. See the [verification record](docs/DEMO_VERIFICATION.md) for the actual exchange results and remaining limitations.
 
 [中文](README.zh-CN.md) · English
 

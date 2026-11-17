@@ -33,15 +33,15 @@ function render(){
   $('#account-time').textContent='账户更新：'+when(state.account_updated);
   $('#source').textContent=`${s.fresh?'采集正常':s.watching?'采集中，等待新鲜数据':'采集未就绪'} · 最近成功 ${when(s.last_poll)}${s.error?' · '+s.error:''}`;
   $('#capital').textContent=`策略已核实资金 ${j.capital_usdt??'未初始化'} USDT · 待核对订单 ${j.pending_count??'未知'}`;
-  $('#phase').textContent=({idle:'实盘未启动',starting:'启动核对中',running:state.entries_enabled?'实盘自动跟随中':'新开仓已暂停',error:'异常停止',stopped:'已停止'})[state.phase]||state.phase;
-  $('#phase').className='pill '+(state.execution_armed?'green':state.phase==='error'?'red':'subtle');
-  $('#tick').textContent='策略最近更新：'+when(state.last_tick)+(state.source_waiting?' · 正等待采集恢复':'');
+  $('#phase').textContent=({idle:'实盘未启动',starting:'启动核对中',recovering:'接口恢复中 · 新开仓暂停',running:!state.entries_enabled?'新开仓已暂停':state.entries_allowed?'实盘自动跟随中':'等待采集恢复 · 新开仓暂停',error:'异常停止',stopped:'已停止'})[state.phase]||state.phase;
+  $('#phase').className='pill '+(state.phase==='error'?'red':state.entries_allowed?'green':'subtle');
+  $('#tick').textContent='策略最近更新：'+when(state.last_tick)+(state.source_waiting?' · 正等待采集恢复':'')+(state.read_recovery?.active?' · 下次连接核对：'+when(state.read_recovery.next_retry_at):'');
   $('#error').textContent=actionError||state.error||'';
   if(!hydrated){fill(state.policy||state.suggested_policy);hydrated=true;}
   $('#policy-state').textContent=state.policy?(j.locked?'已有实盘历史，参数锁定':'实盘参数已保存'):'预填草案，尚未保存';
   for(const control of form.elements)control.disabled=state.running||j.locked||busy;
   $('#inspect').disabled=state.running||busy;
-  $('#review').textContent=starting?'正在核对账户与信号，请稍候…':state.running?'正在自动跟随；持仓与执行结果可在下方查看。':r?.blockers?.length?'暂不能启动：'+r.blockers.join('；'):'点击启动会自动核对账户，确认后持续跟随；无需复制或输入文字。';
+  $('#review').textContent=starting?'正在核对账户与信号，请稍候…':state.read_recovery?.active?'正在自动重连、查单并核对账户；恢复前暂停新开仓，不会直接重发订单。':state.running?(state.entries_allowed?'正在自动跟随；持仓与执行结果可在下方查看。':'后台仍在运行，当前暂停新开仓；采集与账户检查恢复后按原规则继续。'):r?.blockers?.length?'暂不能启动：'+r.blockers.join('；'):state.phase==='error'?'执行已停止；刷新账户只更新查询结果，不能代替恢复采集与重新启动。':'点击启动会自动核对账户，确认后持续跟随；无需复制或输入文字。';
   $('#start').disabled=busy||state.running;
   $('#start').textContent=starting?'正在核对…':'启动实盘自动跟随';
   $('#pause').disabled=busy||!state.running;$('#stop').disabled=busy||!state.running;

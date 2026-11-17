@@ -5,8 +5,10 @@ from datetime import datetime,timezone
 from contextlib import closing
 import hashlib
 import hmac
+import http.client
 import json
 import os
+import ssl
 from pathlib import Path
 import sqlite3
 import threading
@@ -16,7 +18,7 @@ import urllib.parse
 import urllib.request
 
 from .core import Invalid,dec,now,validate_config
-from .executor import Binance,Engine,Halt,APIError,quantize,D
+from .executor import Binance,Engine,Halt,APIError,ReadTimestampError,ClockSyncError,ReadNetworkError,quantize,D
 
 
 class TradeClient(Binance):
@@ -46,7 +48,10 @@ class TradeClient(Binance):
             # Never replay a submission or cancellation here.
             if not signed or method!='GET' or exc.code!=-1021:raise
             self.sync()
-            return self._request_once(method,path,params,signed)
+            try:return self._request_once(method,path,params,signed)
+            except APIError as retry_error:
+                if retry_error.code!=-1021:raise
+                raise ReadTimestampError(path) from None
 
     def signing_timestamp(self):
         with self.clock_lock:
@@ -81,9 +86,16 @@ class TradeClient(Binance):
                 try:delay=max(10,min(86400,int(error.headers.get('Retry-After','60'))))
                 except ValueError:delay=60
                 self.blocked_until=time.monotonic()+delay
+            if method=='GET' and error.code in (500,502,503,504):
+                raise ReadNetworkError(path,'exchange_unavailable',error.code) from None
             try:code=json.loads(error.read()).get('code',error.code)
             except Exception:code=error.code
             raise APIError(code) from None
+        except (OSError,urllib.error.URLError,http.client.HTTPException) as error:
+            certificate=isinstance(error,ssl.SSLCertVerificationError) or isinstance(getattr(error,'reason',None),ssl.SSLCertVerificationError)
+            if method=='GET' and not certificate:
+                raise ReadNetworkError(path) from None
+            raise Halt('Network request failed; writes are never blindly resent. Review any unresolved order.') from None
         except Exception:
             # Never propagate a signed URL or HTTP request repr into a log/browser.
             raise Halt('网络请求失败或超时。下单结果需查单确认；不会直接重发。') from None
@@ -105,7 +117,7 @@ class TradeClient(Binance):
                 self.clock_info=dict(rtt_ms=round(rtt),offset_ms=self.offset,updated=now())
                 return
             self.clock_anchor=None
-            raise Halt('Exchange clock samples were too slow; signed requests paused')
+            raise ClockSyncError('Exchange clock samples were too slow; signed requests paused')
 
     def account(self):
         config=self.request('GET','/fapi/v1/accountConfig',signed=True)

@@ -3,17 +3,72 @@ from types import SimpleNamespace
 from unittest.mock import Mock,patch
 import io
 import json
+import ssl
 import urllib.error
 import urllib.parse
 
 from backend.demo_broker import DemoBroker
 from backend.executor import APIError
-from backend.executor import Halt
+from backend.executor import Halt,ReadTimestampError,ClockSyncError,ReadNetworkError
 from backend.live import TradeClient
 
 
 class TransportClockTests(unittest.TestCase):
     def client(self):return TradeClient(key='fixture-key',secret='fixture-secret',environment='testnet')
+
+    def test_disconnected_get_has_safe_context_but_writes_are_never_retried(self):
+        client=self.client()
+        for method in ('GET','POST','DELETE'):
+            with self.subTest(method=method),patch.object(client,'signing_timestamp',return_value=200000),patch.object(client.opener,'open',side_effect=urllib.error.URLError('private-secret-url')) as request:
+                with self.assertRaises(Halt) as result:client.request(method,'/fapi/v1/order',{'private':'do-not-log'},signed=True)
+                self.assertEqual(isinstance(result.exception,ReadNetworkError),method=='GET')
+                self.assertNotIn('private',str(result.exception));request.assert_called_once()
+
+    def test_only_transient_http_get_errors_are_recoverable(self):
+        client=self.client()
+        for code in (500,502,503,504,403,429):
+            client.blocked_until=0
+            with self.subTest(code=code),patch.object(client.opener,'open',side_effect=urllib.error.HTTPError('private-url',code,'failed',{},io.BytesIO(b'{}'))):
+                with self.assertRaises((Halt,APIError)) as result:client.request('GET','/fapi/v1/time')
+                self.assertEqual(isinstance(result.exception,ReadNetworkError),code in (500,502,503,504))
+
+    def test_certificate_error_is_not_silently_retried_as_connectivity(self):
+        client=self.client()
+        with patch.object(client.opener,'open',side_effect=urllib.error.URLError(ssl.SSLCertVerificationError('bad certificate'))):
+            with self.assertRaises(Halt) as result:client.request('GET','/fapi/v1/time')
+        self.assertNotIsInstance(result.exception,ReadNetworkError)
+
+    def test_exhausted_signed_read_carries_only_safe_recovery_context(self):
+        client=self.client()
+        with patch.object(client,'_request_once',side_effect=APIError(-1021)) as request,patch.object(client,'sync') as sync:
+            with self.assertRaises(ReadTimestampError) as result:
+                client.request('GET','/fapi/v3/account',{'private':'must-not-log'},signed=True)
+        self.assertEqual(request.call_count,2);sync.assert_called_once()
+        self.assertEqual(result.exception.path,'/fapi/v3/account')
+        self.assertNotIn('must-not-log',str(result.exception))
+
+    def test_write_rejection_is_not_marked_as_recoverable_read(self):
+        client=self.client()
+        for method in ('POST','DELETE'):
+            with self.subTest(method=method),patch.object(client,'_request_once',side_effect=APIError(-1021)) as request:
+                with self.assertRaises(APIError) as result:client.request(method,'/fapi/v1/order',signed=True)
+                self.assertNotIsInstance(result.exception,ReadTimestampError);request.assert_called_once()
+
+    def test_clock_sample_timeout_is_typed_without_enabling_signing(self):
+        client=self.client()
+        with patch('backend.live.time.monotonic',side_effect=[0,3,4,7,8,11]),patch.object(client,'request',return_value={'serverTime':200000}):
+            with self.assertRaises(ClockSyncError):client.sync()
+        self.assertIsNone(client.clock_anchor)
+
+    def test_transport_counts_writes_before_response_even_when_ack_fails(self):
+        client=SimpleNamespace(environment='testnet',base='https://demo-fapi.binance.com',
+            request=Mock(side_effect=APIError(-1021)),sync=Mock())
+        broker=DemoBroker(client)
+        with self.assertRaises(APIError):broker.place({'symbol':'BTCUSDT'})
+        self.assertEqual(broker.write_attempts,1);client.request.assert_called_once()
+        with patch.object(broker,'authorize_write',side_effect=Halt('blocked locally')):
+            with self.assertRaises(Halt):broker.place({'symbol':'BTCUSDT'})
+        self.assertEqual(broker.write_attempts,1)
 
     def test_wall_clock_jump_does_not_change_signed_timestamp(self):
         client=self.client()

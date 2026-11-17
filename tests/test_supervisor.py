@@ -35,6 +35,13 @@ class SupervisorTests(unittest.TestCase):
         restored=MonitorSupervisor(self.data)
         self.assertEqual(restored.children['observer'].blocked,'Access denied')
 
+    def test_old_navigation_network_failure_is_recoverable_after_upgrade(self):
+        with self.supervisor.store.db() as db:
+            db.execute('UPDATE traders SET signal_monitor=? WHERE id=?',
+                (json.dumps(dict(status='error',last_error='Error: Page.goto: net::ERR_FAILED at https://www.binance.com/',restartable=False)),'aoying'))
+        restored=MonitorSupervisor(self.data)
+        self.assertFalse(restored.children['observer'].blocked)
+
     def test_credentials_stay_in_memory_and_never_appear_in_status_or_disk(self):
         self.supervisor.children['observer'].blocked='Access denied'
         self.supervisor.commands.put(dict(command='credentials',key='fake-private-key',secret='fake-private-secret'))

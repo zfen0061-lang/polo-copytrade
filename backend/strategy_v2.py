@@ -10,8 +10,8 @@ import sqlite3
 import time
 
 from .core import Invalid,dec
-from .executor import Halt,APIError,quantize
-from .futures_broker import WriteBlocked,EntrySkipped
+from .executor import Halt,APIError,quantize,RECOVERABLE_READ_ERRORS,ReconciliationReadError
+from .futures_broker import WriteBlocked,EntrySkipped,PreSubmitReadError
 
 ZERO=dec('0')
 TERMINAL={'FILLED','CANCELED','EXPIRED','EXPIRED_IN_MATCH','REJECTED'}
@@ -323,6 +323,12 @@ class FuturesStrategyEngine:
             self.book.db.execute('INSERT INTO intents VALUES (?,?,?,?,NULL)',
                 (key,params['newClientOrderId'],'submitting',json.dumps(intent)))
         try:response=self.broker.place(params)
+        except PreSubmitReadError as exc:
+            # Local authorization failed before transport and before _sent.
+            # Discard only this proven-unsubmitted intent so it can be planned
+            # again with the original detection time and fresh price checks.
+            with self.book.db:self.book.db.execute('DELETE FROM intents WHERE id=? AND state=?',(key,'submitting'))
+            raise exc.read_error from None
         except WriteBlocked as exc:
             with self.book.db:self.book.db.execute('UPDATE intents SET state=?,result=? WHERE id=?',
                 ('skipped' if isinstance(exc,EntrySkipped) else 'rejected',json.dumps(dict(reason=str(exc))),key))
@@ -330,16 +336,20 @@ class FuturesStrategyEngine:
         except Exception:
             with self.book.db:self.book.db.execute('UPDATE intents SET state=? WHERE id=?',('uncertain',key))
             try:response=self.broker.query(params['symbol'],params['newClientOrderId'])
+            except RECOVERABLE_READ_ERRORS as exc:raise ReconciliationReadError(exc) from None
             except Exception:raise Halt('Order outcome is unknown; it will be queried, never blindly resent') from None
         with self.book.db:self.book.db.execute('UPDATE intents SET state=?,result=? WHERE id=?',('accounting',json.dumps(response),key))
-        return self.settle(intent,response)
+        try:return self.settle(intent,response)
+        except RECOVERABLE_READ_ERRORS as exc:raise ReconciliationReadError(exc) from None
 
     def recover(self):
         for job in self.book.pending():
             intent=json.loads(job['payload']);params=intent['params']
             try:response=self.broker.query(params['symbol'],params['newClientOrderId'])
+            except RECOVERABLE_READ_ERRORS as exc:raise ReconciliationReadError(exc) from None
             except Exception:raise Halt('Pending order remains unknown; no resubmission') from None
-            self.settle(intent,response)
+            try:self.settle(intent,response)
+            except RECOVERABLE_READ_ERRORS as exc:raise ReconciliationReadError(exc) from None
         self.reconcile_stops()
         owned={(p['symbol'],p['side']):p for p in self.book.positions()}
         targets=set(owned)|{(r['symbol'],r['side']) for r in self.book.db.execute('SELECT symbol,side FROM protection')}

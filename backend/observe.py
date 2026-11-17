@@ -15,6 +15,7 @@ import urllib.request
 import uuid
 
 from .core import Store,Invalid,now,validate_url
+from .connectivity import transient_collector_failure,browser_network_failure
 from .feeds import PublicCollector,PublicResponseUnavailable
 from .paths import default_data_dir
 
@@ -86,7 +87,8 @@ class SignalObserver:
             # history. Do not turn intervening closes into a new historical
             # baseline while an execution workspace is still following it.
             # Manual stops/pauses and a never-initialized observer still baseline.
-            self.initialized=bool(old.get('status')=='error' and old.get('restartable') is True
+            self.initialized=bool(old.get('status')=='error'
+                and (old.get('restartable') is True or browser_network_failure(old.get('last_error','')))
                 and db.execute("SELECT 1 FROM events WHERE trader_id=? AND source_id LIKE 'public:%' LIMIT 1",
                                (self.trader_id,)).fetchone())
             self.meta=dict(mode='observe',status='starting',owner=self.owner,pid=os.getpid(),
@@ -202,13 +204,18 @@ class SignalObserver:
                     break
                 except Exception as exc:
                     crashed=self.recover_crashed_browser(exc)
+                    transient=transient_collector_failure(exc)
+                    if transient and self.collector:
+                        failed=self.collector;self.collector=None
+                        try:failed.close()
+                        except Exception:pass
                     failures+=1
                     error=type(exc).__name__+': '+str(exc).split('\n')[0][:200]
-                    if failures>=5:
+                    if failures>=5 and not transient:
                         self.meta['restartable']=crashed or type(exc).__name__ in ('TimeoutError','URLError','ConnectionError')
                         status='error'
                         break
-                    delay=min(300,30*2**(failures-1))
+                    delay=min(60 if transient else 300,30*2**min(failures-1,4))
                     self.update(status='retrying',last_error=error,retry_seconds=delay)
                     until=time.monotonic()+delay
                     while not self.stop.wait(min(15,max(0,until-time.monotonic()))):

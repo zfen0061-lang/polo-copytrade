@@ -23,6 +23,7 @@ import time
 import urllib.request
 
 from .core import Store,Invalid,now
+from .connectivity import browser_network_failure
 from .paths import default_data_dir,resource_root
 from .runtime_lock import execution_lease
 
@@ -91,7 +92,7 @@ class MonitorSupervisor:
             'awake':Child('awake',['-m','backend.awake','--supervised','--data',str(self.data)]),
         }
         previous=json.loads(self.store.get_trader('aoying').get('signal_monitor') or '{}')
-        if previous.get('status')=='error' and not previous.get('restartable'):
+        if previous.get('status')=='error' and not previous.get('restartable') and not browser_network_failure(previous.get('last_error','')):
             self.children['observer'].blocked=previous.get('last_error') or 'Review collector failure'
 
     def health(self):
@@ -234,7 +235,9 @@ class MonitorSupervisor:
                                 child.process=None;child.schedule_restart(clock)
                                 if name=='observer':
                                     last=json.loads(self.store.get_trader('aoying')['signal_monitor'] or '{}')
-                                    if last.get('status')=='error' and not last.get('restartable',False):child.blocked=last.get('last_error') or 'Review collector failure'
+                                    if (last.get('status')=='error' and not last.get('restartable',False)
+                                            and not browser_network_failure(last.get('last_error',''))):
+                                        child.blocked=last.get('last_error') or 'Review collector failure'
                             can_start=eligible and not child.blocked
                             if can_start and child.process is None and clock>=child.next_start:
                                 if self.clear_dead_lease(column):self.launch(child)

@@ -2,7 +2,7 @@
 import hashlib
 import time
 from .core import dec
-from .executor import Halt,APIError
+from .executor import Halt,APIError,RECOVERABLE_READ_ERRORS
 
 
 class WriteBlocked(Halt):
@@ -12,10 +12,16 @@ class WriteBlocked(Halt):
 class EntrySkipped(WriteBlocked):
     """A late entry quote/freshness check rejected an unsubmitted opening."""
 
+class PreSubmitReadError(WriteBlocked):
+    """Authorization GET failed before transport; no write was attempted."""
+    def __init__(self,error):
+        self.read_error=error
+        super().__init__(str(error))
 
 class FuturesBroker:
     def __init__(self,client):
         self.client=client
+        self.write_attempts=0
         self.assert_endpoint()
 
     def identity(self):return hashlib.sha256(self.client.key.encode()).hexdigest()
@@ -28,10 +34,13 @@ class FuturesBroker:
         self.assert_endpoint()
         if method!='GET':
             try:self.authorize_write(method,path,params or {})
+            except RECOVERABLE_READ_ERRORS as exc:raise PreSubmitReadError(exc) from None
             except WriteBlocked:raise
             except Exception as exc:
                 detail=str(exc) if isinstance(exc,(Halt,APIError)) else type(exc).__name__
                 raise WriteBlocked(detail) from None
+            # Count before transport: even a failed response can hide a write.
+            self.write_attempts+=1
         try:return self.client.request(method,path,params,signed=True)
         except APIError as exc:
             # Only retry a read, once, after correcting its rejected timestamp.

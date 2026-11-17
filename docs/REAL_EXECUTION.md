@@ -1,5 +1,15 @@
 # 实盘自动跟随 / Production automatic following
 
+## 断网与查询恢复 / Connectivity and read recovery
+
+已启动的会话若遇到 GET 断网、超时、临时 HTTP 500/502/503/504、签名 GET 重新校时后仍返回 -1021，或只读时间采样过慢，会在确认本轮没有交易写请求、且没有未决订单时进入“接口恢复中”。新开仓暂停，按 2、4、8、16、32、60 秒（之后最多每 60 秒）重连、校时与核对。恢复后保留事件游标、首次发现时间和用户手动暂停状态，不重放旧开仓。
+
+若已有持久化下单意图，且查单或成交核算遭遇上述暂时性查询故障，程序会自动等待后按原客户端订单号查单与核算；不会再次提交该订单。只有确认结果、持仓和保护单后才继续处理信号。订单查无记录、结果无法确认、保护失败、权限、限流、证书或仓位冲突仍停止核对；绝不把所有错误都当断网。进程重启依然保持未授权状态。接口不可用期间无法保证及时平仓；已确认的交易所止损独立保留。
+
+Public-page navigation connectivity failures (including a Wi-Fi disconnect / ERR_FAILED / ERR_NETWORK_CHANGED) rebuild the browser and keep retrying with a delay capped at 60 seconds, retaining the verified history. Access denials, rate limits, certificate failures and history gaps are not bypassed. Account GET connectivity failures and selected temporary HTTP server errors join clock recovery. A typed durable-order reconciliation failure is the only post-write exception: query the saved client ID, settle idempotently, restore protection and verify the account before resuming; never resubmit that order. Unknown/not-found outcomes still halt for review. Process restart does not rearm trading. Connectivity outages cannot guarantee timely exits; confirmed exchange stops remain independent. Logs contain safe read paths, never signatures or keys.
+
+Refreshing an account updates its snapshot only; it does not start a stopped worker or clear its stop reason. The UI distinguishes effective entry readiness from the user's enable switch. Regression and browser-fixture checks use fake transports, not real orders; they do not prove uninterrupted overnight service or production fills.
+
 从 8765 首页进入：点击顶部“进入实盘跟单”按钮，或左侧“实盘跟单”。两处都会在当前标签页打开 8767，可查看专用跟单账户的运行状态、参数、持仓和交易记录；账户查看与采集页不代表实盘会话的启停状态。
 
 From the port 8765 homepage, use the prominent Open live copy trading button or the sidebar link. Both open port 8767 in the same tab, showing the dedicated account's status, settings, positions and trade history. The read-only collection page does not report the production session's execution state.

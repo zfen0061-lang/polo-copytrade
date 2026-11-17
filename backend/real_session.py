@@ -1,6 +1,7 @@
 """User-started production following. Opening/inspecting this workspace is read-only."""
 from contextlib import ExitStack,closing
 from dataclasses import asdict
+from datetime import datetime,timedelta,timezone
 import hashlib
 import json
 from pathlib import Path
@@ -13,7 +14,7 @@ import uuid
 from .core import Invalid,dec,now
 from .credential_store import TradingCredentialVault
 from .demo_session import PublicSource
-from .executor import Halt,APIError
+from .executor import Halt,APIError,RECOVERABLE_READ_ERRORS,ReconciliationReadError
 from .live import TradeClient
 from .production import ExecutionPermit,ProductionBroker,ProductionEngine,policy_digest
 from .runtime_lock import execution_lease
@@ -37,6 +38,7 @@ class RealSession:
         self.running=False;self.entries_enabled=False;self.phase='idle';self.error=''
         self.account=None;self.account_updated=None;self.last_tick=None;self.logs=[]
         self.cursor=0;self.source_waiting=False;self.close_requested=False
+        self.read_recovery=dict(active=False,attempts=0,next_retry_at=None)
         if self.policy_path.exists():self.policy=StrategyPolicy(**json.loads(self.policy_path.read_text(encoding='utf8')))
         self.suggested_policy=None
         try:
@@ -46,7 +48,7 @@ class RealSession:
 
     def entry_guard(self):
         return (self.running and self.entries_enabled and not self.stop_event.is_set()
-                and not self.stop_file.exists() and self.source.inspect()['fresh'])
+                and not self.read_recovery['active'] and not self.stop_file.exists() and self.source.inspect()['fresh'])
 
     def default_broker(self):
         pair=self.vault.load()
@@ -93,6 +95,8 @@ class RealSession:
                 workspace_id=self.workspace_id,phase=self.phase,running=self.running,
                 execution_armed=bool(self.running and self.broker and self.broker.permit and not self.broker.permit.revoked.is_set()),
                 entries_enabled=self.entries_enabled,connected=self.broker is not None,saved_connection=self.vault.exists(),
+                entries_allowed=bool(self.running and self.phase=='running' and self.entries_enabled and not self.read_recovery['active'] and source.get('fresh') and not self.stop_event.is_set() and not self.stop_file.exists()),
+                read_recovery=dict(self.read_recovery),
                 connection_role='dedicated_trading',
                 account=self.account,account_updated=self.account_updated,last_tick=self.last_tick,
                 source=source,source_waiting=self.source_waiting,policy=asdict(self.policy) if self.policy else None,
@@ -138,7 +142,8 @@ class RealSession:
             if self.running:raise Invalid('Account monitoring is automatic while running')
             broker=self.factory();broker.assert_endpoint()
             account=broker.account()
-            with self.lock:self.broker=broker;self.account=account;self.account_updated=now();self.review=None;self.error=''
+            # Refreshing an account must not erase the reason a worker stopped.
+            with self.lock:self.broker=broker;self.account=account;self.account_updated=now();self.review=None
             issues=[]
             if not account.get('can_trade'):issues.append('账户未返回可交易状态，请核对账户与合约 API 权限。')
             if account.get('hedge_mode'):issues.append('当前为双向持仓模式；此实盘版本要求单向持仓，程序不会替你切换。')
@@ -170,6 +175,7 @@ class RealSession:
                     or review['policy_hash']!=policy_digest(self.policy) or review['account_tag']!=self.broker.identity()[:8]):
                 raise Invalid('Complete a fresh read-only review and enter its exact account-bound start phrase')
             self.review=None;self.stop_event.clear();self.running=True;self.entries_enabled=True
+            self.read_recovery=dict(active=False,attempts=0,next_retry_at=None)
             self.error='';self.phase='starting'
             self.thread=threading.Thread(target=self.run,name='production-follow',daemon=True);self.thread.start()
         return self.status()
@@ -199,6 +205,33 @@ class RealSession:
                        source_time=now(),price=position['entry'])
             result=engine.handle(event);self.log(reason,origin='owned_exit',symbol=position['symbol'],result=result['state'])
 
+    def recover_read_failure(self,engine,error,write_attempts):
+        # Ordinary GET recovery requires a write-free tick. The only post-write
+        # exception is explicitly marked durable-order reconciliation: recover()
+        # queries the existing client id and never submits that intent again.
+        reconciling=isinstance(error,ReconciliationReadError)
+        if not reconciling and (engine.broker.write_attempts!=write_attempts or engine.book.pending()):return False
+        attempts=self.read_recovery['attempts']+1
+        delay=min(60,2**min(attempts,6))
+        retry_at=(datetime.now(timezone.utc)+timedelta(seconds=delay)).isoformat(timespec='milliseconds')
+        with self.lock:
+            self.read_recovery=dict(active=True,attempts=attempts,next_retry_at=retry_at)
+            self.phase='recovering';self.last_tick=now()
+            self.error=('订单结果正在自动查单核对，不会重复下单；' if reconciling else '网络或查询暂不可用，新开仓暂停；')+str(delay)+' 秒后自动重连并核对。'
+        self.log('Durable order read recovery; no resubmission' if reconciling else 'Read recovery; entries held until account checks succeed','warning',
+                 error_code=getattr(error,'code',None),read_path=getattr(error,'path',None),
+                 retry_seconds=delay,attempt=attempts)
+        self.stop_event.wait(delay)
+        return True
+
+    def complete_read_recovery(self):
+        if not self.read_recovery['attempts']:return
+        attempts=self.read_recovery['attempts']
+        with self.lock:
+            self.read_recovery=dict(active=False,attempts=0,next_retry_at=None)
+            self.phase='running';self.error=''
+        self.log('Account checks recovered; original signal cursor and entry-age limits retained',attempts=attempts)
+
     def tick(self,engine,maintenance=True,funding=True):
         if self.stop_file.exists():raise Halt('STOP_REAL_TRADING detected; stops remain on the exchange')
         if maintenance:
@@ -210,9 +243,15 @@ class RealSession:
             except RiskLimit:
                 self.entries_enabled=False;self.flatten_owned(engine,'Cumulative strategy loss limit')
                 raise
+            if self.read_recovery['active']:
+                with self.lock:
+                    self.read_recovery['active']=False;self.read_recovery['next_retry_at']=None
+                    self.phase='running';self.error=''
+        if self.read_recovery['active']:return
         if self.close_requested:
             self.close_requested=False;self.flatten_owned(engine,'Explicit owned-position exit')
         process_public(self,engine,self.source.inspect(),prefix='real:'+self.workspace_id+':aoying:',label='production')
+        self.complete_read_recovery()
 
     def run(self):
         engine=None
@@ -233,7 +272,12 @@ class RealSession:
                 next_maintenance=next_funding=0
                 while not self.stop_event.is_set():
                     clock=time.monotonic();maintenance=clock>=next_maintenance;funding=clock>=next_funding
-                    self.tick(engine,maintenance,funding)
+                    write_attempts=engine.broker.write_attempts
+                    try:self.tick(engine,maintenance,funding)
+                    except (*RECOVERABLE_READ_ERRORS,ReconciliationReadError) as exc:
+                        if not self.recover_read_failure(engine,exc,write_attempts):raise
+                        next_maintenance=next_funding=0
+                        continue
                     if maintenance:next_maintenance=clock+15
                     if funding:next_funding=clock+60
                     self.stop_event.wait(1)
@@ -245,6 +289,7 @@ class RealSession:
             elif self.broker:self.broker.disarm()
             with self.lock:
                 self.running=self.entries_enabled=False;self.review=None
+                self.read_recovery['active']=False;self.read_recovery['next_retry_at']=None
                 if self.phase!='error':self.phase='stopped'
 
     def shutdown(self):

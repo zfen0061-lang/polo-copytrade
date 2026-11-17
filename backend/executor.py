@@ -37,6 +37,31 @@ class APIError(RuntimeError):
         self.code = code
         super().__init__('Binance API code ' + str(code))
 
+class ReadTimestampError(APIError):
+    """A signed GET was rejected twice; contains no parameters or credentials."""
+    def __init__(self,path):
+        super().__init__(-1021)
+        self.path=urllib.parse.urlsplit(path).path
+        self.args=('Binance API code -1021 after clock resync (GET '+self.path+')',)
+
+class ClockSyncError(Halt):
+    """Read-only server-time samples were too slow to sign safely."""
+
+class ReadNetworkError(Halt):
+    """A failed GET can be retried; never contains a signed URL or parameters."""
+    def __init__(self,path,reason='connection_failed',status=None):
+        self.path=urllib.parse.urlsplit(path).path
+        self.reason=reason;self.status=status
+        super().__init__('Read temporarily unavailable: '+self.reason+' (GET '+self.path+')')
+
+RECOVERABLE_READ_ERRORS=(ReadTimestampError,ClockSyncError,ReadNetworkError)
+
+class ReconciliationReadError(Halt):
+    """A durable order needs more GETs, never a second submission."""
+    def __init__(self,error):
+        self.path=getattr(error,'path',None);self.code=getattr(error,'code',None)
+        super().__init__('Durable order reconciliation waiting for reads: '+str(error))
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args):
         return None

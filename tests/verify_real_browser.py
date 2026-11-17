@@ -7,12 +7,14 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+from unittest.mock import patch
 from decimal import Decimal
 from playwright.sync_api import sync_playwright,expect
 from backend.core import Store,now
 from backend.feeds import Runner
 from backend.real_session import RealSession
 from backend.production import ProductionBroker
+from backend.executor import ReadTimestampError
 from backend.server import LocalHTTPServer,make_handler
 from backend.strategy_v2 import StrategyPolicy
 from tests.test_production import ProductionClientFixture
@@ -73,8 +75,12 @@ def main():
                 expect(page.locator('#phase')).to_have_text('实盘自动跟随中',timeout=10000)
                 assert session.policy.initial_capital=='59'
                 assert len(dialogs)==2 and '59 USDT' in dialogs[1]
-                event('browser-open','OPEN_LONG')
-                expect(page.locator('#positions')).to_contain_text('BTCUSDT',timeout=10000)
+                with patch.object(broker,'account',side_effect=ReadTimestampError('/fapi/v3/account')):
+                    event('browser-open','OPEN_LONG')
+                    expect(page.locator('#phase')).to_have_text('接口恢复中 · 新开仓暂停',timeout=15000)
+                    expect(page.locator('#review')).to_contain_text('自动重连、查单并核对账户')
+                    assert client.exchange.submit_count==0
+                expect(page.locator('#positions')).to_contain_text('BTCUSDT',timeout=15000)
                 client.exchange.price*=Decimal('1.10')
                 event('browser-close','CLOSE_LONG')
                 expect(page.locator('#positions')).to_contain_text('没有本程序持仓',timeout=10000)
@@ -86,7 +92,8 @@ def main():
                 browser.close()
             print(json.dumps(dict(fixture_only=True,actual_binance_orders=False,fixture_orders=client.exchange.submit_count,
                 browser_errors=errors,opening_requires_confirmation=True,full_close_outside_band=True,
-                no_typed_phrase=True,automatic_preflight=True,cancel_places_no_orders=True)))
+                no_typed_phrase=True,automatic_preflight=True,cancel_places_no_orders=True,
+                read_recovery_visible=True,recovered_entry_once=True)))
         finally:
             session.shutdown();server.shutdown();server.server_close();thread.join(2)
 

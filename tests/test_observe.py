@@ -3,10 +3,12 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from backend.core import Store,Invalid
 from backend.observe import SignalObserver,AOYING_URL
 from backend.feeds import PublicResponseUnavailable
+from backend.connectivity import browser_network_failure
 
 
 def operation(key,action='OPEN_LONG',symbol='BTCUSDT'):
@@ -130,6 +132,41 @@ class ObserverTests(unittest.TestCase):
         self.collector.gap=True
         with self.assertRaisesRegex(Invalid,'gap'):self.observer.poll()
         self.assertEqual(len(self.store.snapshot()['events']),1)
+
+    def test_wifi_disconnect_keeps_retrying_and_preserves_public_history(self):
+        self.observer.poll();self.observer.close()
+        observer=SignalObserver(self.store,collector_factory=lambda:self.collector)
+        observer.claim();observer.initialized=True
+        poll=observer.poll;attempts=[];waits=[]
+        def failing_poll():
+            attempts.append(True)
+            if len(attempts)<=7:
+                raise RuntimeError('Page.goto: net::ERR_FAILED at '+AOYING_URL)
+            self.collector.rows=[operation('after-wifi','CLOSE_LONG'),operation('old')]
+            count=poll();observer.stop.set();return count
+        def wait(seconds):waits.append(seconds);return observer.stop.is_set()
+        with patch.object(observer,'claim'),patch.object(observer,'poll',side_effect=failing_poll),patch.object(observer.stop,'wait',side_effect=wait),patch('backend.observe.time.monotonic',side_effect=lambda:len(waits)*61):
+            observer.run()
+        self.assertEqual(len(attempts),8)
+        self.assertEqual(self.store.snapshot()['events'][0]['status'],'observed')
+        self.assertEqual(self.store.snapshot()['orders'],[])
+        self.assertTrue(self.collector.closed)
+
+    def test_legacy_network_failure_can_restart_without_rebaselining_closes(self):
+        self.observer.poll();self.observer.close('error','Error: Page.goto: net::ERR_FAILED at '+AOYING_URL)
+        restarted=SignalObserver(self.store,collector_factory=lambda:self.collector)
+        try:
+            restarted.claim();self.assertTrue(restarted.initialized)
+            self.collector.rows=[operation('missed-close','CLOSE_LONG'),*self.collector.rows]
+            restarted.poll()
+            self.assertEqual(self.store.snapshot()['events'][0]['status'],'observed')
+        finally:restarted.close()
+
+    def test_network_classification_never_bypasses_access_or_certificate_errors(self):
+        self.assertTrue(browser_network_failure('Error: Page.goto: net::ERR_NETWORK_CHANGED at '+AOYING_URL))
+        for message in ('Page.goto: net::ERR_CERT_AUTHORITY_INVALID','Public access restricted 403',
+                        'rate limited 429','Operation history gap','parser ERR_FAILED','Page.goto: net::ERR_BLOCKED_BY_CLIENT'):
+            self.assertFalse(browser_network_failure(message),message)
 
     def test_observer_mode_blocks_paper_execution(self):
         with self.assertRaisesRegex(Invalid,'observation only'):
